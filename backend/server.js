@@ -15,13 +15,7 @@ const proxyUtils = require('./utils/proxy.utils');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const defaultAllowedOrigins = [
-    'https://smoothiegreat.shop',
-    'https://www.smoothiegreat.shop',
-];
-
 const allowedOrigins = new Set([
-    ...defaultAllowedOrigins,
     ...String(process.env.CORS_ORIGINS || '')
         .split(',')
         .map((item) => item.trim())
