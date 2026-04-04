@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-
-const API_BASE = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
+import { API_BASE } from '../utils/apiBase';
 
 const fetchCurrentUser = async (token) => {
   const response = await fetch(`${API_BASE}/auth/me`, {

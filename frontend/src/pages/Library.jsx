@@ -2,8 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import UserPanelDrawer from '../components/layout/UserPanelDrawer';
 import VideoThumbnail from '../components/ui/VideoThumbnail';
-
-const API_BASE = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
+import { API_BASE } from '../utils/apiBase';
 
 const formatDuration = (seconds) => {
   const safe = Math.max(0, Math.floor(Number(seconds || 0)));

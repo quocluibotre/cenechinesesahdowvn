@@ -2,8 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import VideoThumbnail from '../ui/VideoThumbnail';
-
-const API_BASE = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
+import { API_BASE } from '../../utils/apiBase';
 
 const authHeaders = () => {
   const token = localStorage.getItem('token');

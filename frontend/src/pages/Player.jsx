@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import UserPanelDrawer from '../components/layout/UserPanelDrawer';
 import VideoThumbnail from '../components/ui/VideoThumbnail';
+import { API_BASE } from '../utils/apiBase';
 
-const API_BASE = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 const API_ORIGIN = API_BASE.endsWith('/api') ? API_BASE.slice(0, -4) : API_BASE;
 
 const jsonHeaders = {

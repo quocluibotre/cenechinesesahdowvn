@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import VideoThumbnail from '../components/ui/VideoThumbnail';
-
-const API_BASE = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
+import { API_BASE } from '../utils/apiBase';
 
 const EMPTY_UPLOAD_FORM = {
   title: '',
