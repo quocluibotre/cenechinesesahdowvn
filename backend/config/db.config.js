@@ -114,17 +114,25 @@ const createPgConnectionWrapper = (client) => ({
 });
 
 if (usePostgres) {
+    const connectionString = String(process.env.DATABASE_URL || '').trim();
     const shouldUseSsl = String(process.env.DB_SSL || 'true').trim().toLowerCase() !== 'false';
-    const pgPool = new PgPool({
-        connectionString: String(process.env.DATABASE_URL || '').trim() || undefined,
-        host: process.env.DB_HOST || undefined,
-        port: process.env.DB_PORT ? Number(process.env.DB_PORT) : undefined,
-        database: process.env.DB_NAME || undefined,
-        user: process.env.DB_USER || undefined,
-        password: process.env.DB_PASSWORD || undefined,
+    const pgPoolConfig = {
         max: Number(process.env.DB_CONNECTION_LIMIT || 10),
         ssl: shouldUseSsl ? { rejectUnauthorized: false } : undefined,
-    });
+    };
+
+    if (connectionString) {
+        // When DATABASE_URL is provided (Render/Supabase), do not let legacy DB_HOST/DB_USER override it.
+        pgPoolConfig.connectionString = connectionString;
+    } else {
+        pgPoolConfig.host = process.env.DB_HOST || undefined;
+        pgPoolConfig.port = process.env.DB_PORT ? Number(process.env.DB_PORT) : undefined;
+        pgPoolConfig.database = process.env.DB_NAME || undefined;
+        pgPoolConfig.user = process.env.DB_USER || undefined;
+        pgPoolConfig.password = process.env.DB_PASSWORD || undefined;
+    }
+
+    const pgPool = new PgPool(pgPoolConfig);
 
     pgPool.connect()
         .then((client) => {
