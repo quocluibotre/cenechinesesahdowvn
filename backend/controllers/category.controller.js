@@ -7,7 +7,7 @@ exports.getCategories = async (req, res) => {
                    COUNT(v.id) AS video_count
             FROM categories c
             LEFT JOIN videos v ON c.id = v.category_id AND v.is_published = 1
-            GROUP BY c.id
+            GROUP BY c.id, c.name, c.slug, c.icon, c.description, c.sort_order
             ORDER BY c.sort_order ASC
         `;
 
