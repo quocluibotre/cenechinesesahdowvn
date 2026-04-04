@@ -17,10 +17,17 @@ const PORT = process.env.PORT || 3000;
 
 const normalize = (value) => String(value || '').trim().replace(/\/$/, '');
 
-const configuredOriginEntries = String(process.env.CORS_ORIGINS || '')
-    .split(',')
+const configuredOriginEntries = [
+    ...String(process.env.CORS_ORIGINS || '').split(','),
+    ...String(process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '').split(','),
+]
     .map((item) => normalize(item))
     .filter(Boolean);
+
+const defaultAllowedHostnames = new Set([
+    'cinechineseshadow.online',
+    'www.cinechineseshadow.online',
+]);
 
 const allowedOrigins = new Set();
 const allowedHostnames = new Set();
@@ -36,6 +43,10 @@ configuredOriginEntries.forEach((entry) => {
     } catch {
         // Ignore invalid CORS_ORIGINS entries.
     }
+});
+
+defaultAllowedHostnames.forEach((hostname) => {
+    allowedHostnames.add(hostname);
 });
 
 const allowedHostnameSuffixes = String(process.env.CORS_ORIGIN_SUFFIXES || '')
