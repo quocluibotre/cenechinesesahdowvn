@@ -15,25 +15,57 @@ const proxyUtils = require('./utils/proxy.utils');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const allowedOrigins = new Set([
-    ...String(process.env.CORS_ORIGINS || '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean),
-]);
+const normalize = (value) => String(value || '').trim().replace(/\/$/, '');
+
+const configuredOriginEntries = String(process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((item) => normalize(item))
+    .filter(Boolean);
+
+const allowedOrigins = new Set();
+const allowedHostnames = new Set();
+
+configuredOriginEntries.forEach((entry) => {
+    allowedOrigins.add(entry);
+
+    try {
+        const parsed = new URL(entry.includes('://') ? entry : `https://${entry}`);
+        if (parsed.hostname) {
+            allowedHostnames.add(parsed.hostname.toLowerCase());
+        }
+    } catch {
+        // Ignore invalid CORS_ORIGINS entries.
+    }
+});
+
+const allowedHostnameSuffixes = String(process.env.CORS_ORIGIN_SUFFIXES || '')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+    .map((item) => item.replace(/^\*\./, '').replace(/^\./, ''));
+
+const hasAllowedSuffix = (hostname) => allowedHostnameSuffixes.some((suffix) => (
+    hostname === suffix || hostname.endsWith(`.${suffix}`)
+));
 
 const isAllowedOrigin = (origin) => {
     if (!origin) {
         return true;
     }
 
-    if (allowedOrigins.has(origin)) {
+    const normalizedOrigin = normalize(origin);
+
+    if (allowedOrigins.has(normalizedOrigin)) {
         return true;
     }
 
     try {
-        const { hostname } = new URL(origin);
-        return hostname.endsWith('.pages.dev');
+        const { hostname } = new URL(normalizedOrigin);
+        const safeHostname = String(hostname || '').toLowerCase();
+
+        return allowedHostnames.has(safeHostname)
+            || hasAllowedSuffix(safeHostname)
+            || safeHostname.endsWith('.pages.dev');
     } catch {
         return false;
     }
