@@ -7,7 +7,7 @@ const EMPTY_UPLOAD_FORM = {
   title: '',
   title_cn: '',
   description: '',
-  category_id: '1',
+  category_id: '',
   hsk_level: '1',
   is_free: true,
   is_published: true,
@@ -54,6 +54,13 @@ const mapSlangEntryFromApi = (item = {}) => ({
   example_pinyin_2: item.example_pinyin_2 || '',
   example_vi_2: item.example_vi_2 || '',
 });
+
+const getDefaultCategoryId = (list = []) => {
+  if (!Array.isArray(list) || !list.length) {
+    return '';
+  }
+  return String(list[0].id);
+};
 
 const normalizeSlangEntries = (entries) => {
   if (!Array.isArray(entries)) {
@@ -239,15 +246,19 @@ const uploadFileToCloudflare = async (file, folder) => {
   return signed.public_url;
 };
 
-const toPayload = (form, slangEntries = []) => ({
-  ...form,
-  category_id: Number(form.category_id),
-  hsk_level: Number(form.hsk_level),
-  duration: Number(form.duration || 0),
-  is_free: Boolean(form.is_free),
-  is_published: Boolean(form.is_published),
-  slang_entries: normalizeSlangEntries(slangEntries),
-});
+const toPayload = (form, slangEntries = []) => {
+  const parsedCategoryId = Number(form.category_id);
+
+  return {
+    ...form,
+    category_id: Number.isFinite(parsedCategoryId) && parsedCategoryId > 0 ? parsedCategoryId : null,
+    hsk_level: Number(form.hsk_level),
+    duration: Number(form.duration || 0),
+    is_free: Boolean(form.is_free),
+    is_published: Boolean(form.is_published),
+    slang_entries: normalizeSlangEntries(slangEntries),
+  };
+};
 
 const Admin = () => {
   const navigate = useNavigate();
@@ -417,6 +428,31 @@ const Admin = () => {
       refreshAll();
     }
   }, [isAuthorized]);
+
+  useEffect(() => {
+    const validCategoryIds = new Set(categories.map((cat) => String(cat.id)));
+    const fallbackCategoryId = getDefaultCategoryId(categories);
+
+    setUploadForm((prev) => {
+      const currentCategoryId = String(prev.category_id || '');
+      if ((currentCategoryId && validCategoryIds.has(currentCategoryId)) || currentCategoryId === fallbackCategoryId) {
+        return prev;
+      }
+      return { ...prev, category_id: fallbackCategoryId };
+    });
+
+    setEditForm((prev) => {
+      if (!prev) {
+        return prev;
+      }
+
+      const currentCategoryId = String(prev.category_id || '');
+      if ((currentCategoryId && validCategoryIds.has(currentCategoryId)) || currentCategoryId === fallbackCategoryId) {
+        return prev;
+      }
+      return { ...prev, category_id: fallbackCategoryId };
+    });
+  }, [categories]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -600,7 +636,7 @@ const Admin = () => {
         void triggerBackgroundVocabularyGenerate(createdVideoId);
       }
 
-      setUploadForm({ ...EMPTY_UPLOAD_FORM });
+      setUploadForm({ ...EMPTY_UPLOAD_FORM, category_id: getDefaultCategoryId(categories) });
       setUploadFiles({ ...EMPTY_ASSET_FILES });
       setUploadSlangEntries([createEmptySlangEntry()]);
       await Promise.all([fetchVideos(), fetchStats()]);
@@ -619,7 +655,7 @@ const Admin = () => {
       title: video.title || '',
       title_cn: video.title_cn || '',
       description: video.description || '',
-      category_id: String(video.category_id || categories[0]?.id || 1),
+      category_id: String(video.category_id || getDefaultCategoryId(categories)),
       hsk_level: String(video.hsk_level || 1),
       is_free: Number(video.is_free) === 1,
       is_published: Number(video.is_published) === 1,
@@ -1061,6 +1097,7 @@ const Admin = () => {
                   <textarea className="glass-input px-3 py-2 rounded-lg md:col-span-2" placeholder="Mô tả" value={editForm.description} onChange={(e) => setEditForm((s) => ({ ...s, description: e.target.value }))} />
 
                   <select className="glass-input px-3 py-2 rounded-lg" value={editForm.category_id} onChange={(e) => setEditForm((s) => ({ ...s, category_id: e.target.value }))}>
+                    {!categories.length && <option value="">Chưa có danh mục</option>}
                     {categories.map((cat) => (
                       <option key={cat.id} value={cat.id}>{cat.name}</option>
                     ))}
@@ -1134,12 +1171,24 @@ const Admin = () => {
 
               <textarea className="glass-input px-3 py-2 rounded-lg md:col-span-2" placeholder="Mô tả" value={uploadForm.description} onChange={(e) => setUploadForm((s) => ({ ...s, description: e.target.value }))} />
 
-              <select className="glass-input px-3 py-2 rounded-lg" value={uploadForm.category_id} onChange={(e) => setUploadForm((s) => ({ ...s, category_id: e.target.value }))}>
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>{cat.name}</option>
-                ))}
-                {!categories.length && <option value="1">Category 1</option>}
-              </select>
+              <div className="space-y-2">
+                <select
+                  className="glass-input w-full px-3 py-2 rounded-lg"
+                  value={uploadForm.category_id}
+                  onChange={(e) => setUploadForm((s) => ({ ...s, category_id: e.target.value }))}
+                  disabled={!categories.length}
+                >
+                  {!categories.length && <option value="">Chưa có danh mục</option>}
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+                {!categories.length && (
+                  <p className="text-xs text-amber-700">
+                    Chưa có danh mục trong hệ thống. Bạn vẫn có thể đăng video, backend sẽ tự xử lý category khi dữ liệu danh mục được tạo.
+                  </p>
+                )}
+              </div>
 
               <select className="glass-input px-3 py-2 rounded-lg" value={uploadForm.hsk_level} onChange={(e) => setUploadForm((s) => ({ ...s, hsk_level: e.target.value }))}>
                 {[1, 2, 3, 4, 5, 6].map((h) => <option key={h} value={h}>HSK {h}</option>)}
