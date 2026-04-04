@@ -148,6 +148,28 @@ const normalizeSlangEntries = (entries) => {
     return normalized;
 };
 
+const resolveValidCategoryId = async (rawCategoryId) => {
+    const parsed = Number(rawCategoryId);
+
+    if (Number.isFinite(parsed) && parsed > 0) {
+        const [exactRows] = await db.promise().query('SELECT id FROM categories WHERE id = ? LIMIT 1', [parsed]);
+        if (exactRows.length) {
+            return Number(exactRows[0].id);
+        }
+    }
+
+    const [fallbackRows] = await db.promise().query(
+        'SELECT id FROM categories ORDER BY sort_order ASC, id ASC LIMIT 1'
+    );
+
+    if (fallbackRows.length) {
+        return Number(fallbackRows[0].id);
+    }
+
+    // Allow NULL when category master data is not seeded yet.
+    return null;
+};
+
 // Lấy danh sách Video (Convert từ get_videos.php)
 exports.getVideos = async (req, res) => {
     try {
@@ -369,10 +391,7 @@ exports.uploadVideo = async (req, res) => {
             return res.status(400).json({ success: false, error: 'Video URL không hợp lệ' });
         }
 
-        let safeCategoryId = Number(category_id || 1);
-        if (Number.isNaN(safeCategoryId) || safeCategoryId < 1 || safeCategoryId > 6) {
-            safeCategoryId = 6;
-        }
+        const safeCategoryId = await resolveValidCategoryId(category_id);
 
         let safeHskLevel = Number(hsk_level || 1);
         if (Number.isNaN(safeHskLevel) || safeHskLevel < 1 || safeHskLevel > 6) {
@@ -439,10 +458,7 @@ exports.updateVideo = async (req, res) => {
             return res.status(400).json({ success: false, error: 'Video URL không hợp lệ' });
         }
 
-        let safeCategoryId = Number(category_id || 1);
-        if (Number.isNaN(safeCategoryId) || safeCategoryId < 1 || safeCategoryId > 6) {
-            safeCategoryId = 6;
-        }
+        const safeCategoryId = await resolveValidCategoryId(category_id);
 
         let safeHskLevel = Number(hsk_level || 1);
         if (Number.isNaN(safeHskLevel) || safeHskLevel < 1 || safeHskLevel > 6) {
