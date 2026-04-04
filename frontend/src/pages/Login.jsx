@@ -124,7 +124,7 @@ const Login = () => {
           localStorage.removeItem('user');
         }
 
-        const fallbackPath = resolvedUser?.role === 'admin' ? '/admin' : '/home';
+        const fallbackPath = '/library';
         navigate(redirectPath || fallbackPath, { replace: true });
       } else {
         setError(data.message || 'Đăng nhập thất bại');
