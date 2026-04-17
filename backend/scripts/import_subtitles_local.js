@@ -117,6 +117,140 @@ function mapRowsToPayload(rows) {
         .sort((a, b) => a.start - b.start);
 }
 
+function parseJsonLoose(text) {
+    const safe = String(text || '').trim();
+    if (!safe) return null;
+
+    try {
+        return JSON.parse(safe);
+    } catch {
+        // continue with loose extraction
+    }
+
+    const objectMatch = safe.match(/\{[\s\S]*\}/);
+    if (objectMatch?.[0]) {
+        try {
+            return JSON.parse(objectMatch[0]);
+        } catch {
+            // continue
+        }
+    }
+
+    const arrayMatch = safe.match(/\[[\s\S]*\]/);
+    if (arrayMatch?.[0]) {
+        try {
+            return JSON.parse(arrayMatch[0]);
+        } catch {
+            return null;
+        }
+    }
+
+    return null;
+}
+
+function normalizeTranslatedText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function chunkArray(source, size) {
+    const items = Array.isArray(source) ? source : [];
+    const chunkSize = Math.max(1, Number(size || 1));
+    const chunks = [];
+
+    for (let i = 0; i < items.length; i += chunkSize) {
+        chunks.push(items.slice(i, i + chunkSize));
+    }
+
+    return chunks;
+}
+
+async function translateChunkWithOllama(chunk, config) {
+    const ollamaUrl = String(config?.url || '').replace(/\/$/, '');
+    const model = String(config?.model || '').trim();
+
+    if (!ollamaUrl) {
+        throw new Error('Thieu ollama url');
+    }
+
+    if (!model) {
+        throw new Error('Thieu ollama model');
+    }
+
+    const payload = chunk.map((item, index) => ({
+        index,
+        en_text: item.en_text,
+    }));
+
+    const prompt = [
+        'Translate each English subtitle to natural Vietnamese for movie subtitles.',
+        'Keep meaning accurate, concise, and fluent.',
+        `Return ONLY strict JSON: {"translations": ["...", "..."]} with exactly ${chunk.length} items in the same order.`,
+        `Input: ${JSON.stringify(payload)}`,
+    ].join('\n');
+
+    const response = await axios.post(
+        `${ollamaUrl}/api/chat`,
+        {
+            model,
+            stream: false,
+            format: 'json',
+            messages: [
+                {
+                    role: 'system',
+                    content: 'You are a subtitle translator. Output JSON only.',
+                },
+                {
+                    role: 'user',
+                    content: prompt,
+                },
+            ],
+        },
+        {
+            timeout: 240000,
+            headers: { 'Content-Type': 'application/json' },
+        }
+    );
+
+    const content = response.data?.message?.content || '';
+    const parsed = parseJsonLoose(content);
+
+    let translations = null;
+    if (Array.isArray(parsed)) {
+        translations = parsed;
+    } else if (Array.isArray(parsed?.translations)) {
+        translations = parsed.translations;
+    }
+
+    if (!Array.isArray(translations) || translations.length !== chunk.length) {
+        throw new Error('Ollama output khong dung so luong cau');
+    }
+
+    return chunk.map((item, index) => ({
+        ...item,
+        vn_text: normalizeTranslatedText(translations[index]),
+    }));
+}
+
+async function translateSubtitlesWithOllama(subtitles, config) {
+    const chunkSize = Math.max(4, Math.min(60, Number(config?.chunkSize || 18)));
+    const chunks = chunkArray(subtitles, chunkSize);
+    const output = [];
+
+    for (let i = 0; i < chunks.length; i += 1) {
+        const chunk = chunks[i];
+        try {
+            const translated = await translateChunkWithOllama(chunk, config);
+            output.push(...translated);
+            console.log(`[local-ai] chunk ${i + 1}/${chunks.length} translated (${translated.length} lines)`);
+        } catch (error) {
+            console.warn(`[local-ai] chunk ${i + 1}/${chunks.length} failed: ${error.message}`);
+            output.push(...chunk.map((item) => ({ ...item, vn_text: '' })));
+        }
+    }
+
+    return output;
+}
+
 function buildHeaders(token) {
     const headers = { 'Content-Type': 'application/json' };
     const safeToken = String(token || '').trim();
@@ -171,7 +305,11 @@ async function main() {
     const youtubeId = String(args['youtube-id'] || args.youtube_id || '').trim();
     const token = args.token || process.env.API_TOKEN || '';
     const lang = args.lang || process.env.SUBTITLE_LANG || '';
-    const shouldRetranslate = !args['skip-retranslate'];
+    const useLocalAi = Boolean(args['local-ai'] || args['use-local-ai'] || args['ollama-model'] || process.env.LOCAL_AI_TRANSLATE === '1');
+    const ollamaUrl = String(args['ollama-url'] || process.env.OLLAMA_URL || 'http://127.0.0.1:11434').trim();
+    const ollamaModel = String(args['ollama-model'] || process.env.OLLAMA_MODEL || 'qwen2.5:7b').trim();
+    const ollamaChunkSize = Number(args['ollama-chunk-size'] || process.env.OLLAMA_CHUNK_SIZE || 18);
+    const shouldRetranslate = Boolean(args['with-retranslate']) || (!args['skip-retranslate'] && !useLocalAi);
     const maxRounds = args['max-rounds'] || process.env.RETRANSLATE_MAX_ROUNDS || 8;
 
     if (!apiBase) {
@@ -196,11 +334,25 @@ async function main() {
 
     console.log(`[import] fetched ${subtitles.length} rows from local transcript`);
 
+    let importSubtitles = subtitles;
+
+    if (useLocalAi) {
+        console.log(`[local-ai] translating with Ollama model=${ollamaModel}...`);
+        importSubtitles = await translateSubtitlesWithOllama(subtitles, {
+            url: ollamaUrl,
+            model: ollamaModel,
+            chunkSize: ollamaChunkSize,
+        });
+
+        const translatedCount = importSubtitles.filter((item) => normalizeTranslatedText(item.vn_text)).length;
+        console.log(`[local-ai] translated ${translatedCount}/${importSubtitles.length} lines`);
+    }
+
     const headers = buildHeaders(token);
     const importPayload = {
         video_id: videoId,
         youtube_id: youtubeId,
-        subtitles,
+        subtitles: importSubtitles,
         replace_existing: true,
     };
 
@@ -217,7 +369,7 @@ async function main() {
         const totalUpdated = await callRetranslateUntilDone(apiBase, headers, videoId, maxRounds);
         console.log(`[retranslate] done total_updated=${totalUpdated}`);
     } else {
-        console.log('[retranslate] skipped by --skip-retranslate');
+        console.log('[retranslate] skipped');
     }
 }
 

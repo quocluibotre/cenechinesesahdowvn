@@ -118,6 +118,15 @@ If server cannot fetch YouTube captions, import captions from your local machine
 	- call `/api/youtube/subtitles/import`,
 	- then auto call `/api/youtube/subtitles/retranslate` in rounds.
 
+Optional: local AI translation with Ollama (better quality, no paid API)
+
+1. Install Ollama and pull model:
+	- `ollama pull qwen2.5:7b`
+2. Run import using local AI translation:
+	- `npm run subtitles:import-local -- --api https://<your-render-service>.onrender.com/api --video-id <DB_VIDEO_ID> --youtube-id <YOUTUBE_ID> --local-ai --ollama-model qwen2.5:7b`
+3. If you still want server re-translate after local AI:
+	- add `--with-retranslate`
+
 Bulk mode for many videos with missing subtitles:
 
 - `cd backend`
