@@ -78,11 +78,342 @@ const findSubtitleIndex = (subs, time) => {
   return -1;
 };
 
+const SUBTITLE_MAX_VISIBLE_CHARS = 220;
+const SUBTITLE_MAX_HIGHLIGHT_WORDS = 48;
+const DB_SUBTITLE_CHUNK_MAX_WORDS = 14;
+const DB_SUBTITLE_CHUNK_MAX_CHARS = 88;
+const DB_SUBTITLE_CHUNK_MIN_DURATION = 0.55;
+
+const sanitizeSubtitleText = (value, maxChars = SUBTITLE_MAX_VISIBLE_CHARS) => {
+  const normalized = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) return '';
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars).trimEnd()}...`;
+};
+
+const parseWordTimings = (value) => {
+  if (!value) return null;
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return null;
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const splitSubtitleSentences = (text) => {
+  const normalized = sanitizeSubtitleText(text, 2000);
+  if (!normalized) return [];
+
+  const parts = normalized.match(/[^.!?]+(?:[.!?]+|$)/g);
+  if (!parts || !parts.length) return [normalized];
+  return parts.map((item) => item.trim()).filter(Boolean);
+};
+
+const splitSubtitleByWords = (text, maxWords = DB_SUBTITLE_CHUNK_MAX_WORDS, maxChars = DB_SUBTITLE_CHUNK_MAX_CHARS) => {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+
+  const chunks = [];
+  let current = [];
+
+  words.forEach((word) => {
+    const candidate = current.length ? `${current.join(' ')} ${word}` : word;
+    const shouldBreak = current.length >= maxWords || candidate.length > maxChars;
+
+    if (shouldBreak && current.length) {
+      chunks.push(current.join(' '));
+      current = [word];
+      return;
+    }
+
+    current.push(word);
+  });
+
+  if (current.length) {
+    chunks.push(current.join(' '));
+  }
+
+  return chunks;
+};
+
+const buildSubtitleChunks = (text, maxWords = DB_SUBTITLE_CHUNK_MAX_WORDS, maxChars = DB_SUBTITLE_CHUNK_MAX_CHARS) => {
+  const normalized = sanitizeSubtitleText(text, 4000);
+  if (!normalized) return [];
+
+  const sentenceParts = splitSubtitleSentences(normalized);
+  const chunks = [];
+
+  sentenceParts.forEach((part) => {
+    const wordCount = part.split(/\s+/).filter(Boolean).length;
+    if (wordCount <= maxWords && part.length <= maxChars) {
+      chunks.push(part);
+      return;
+    }
+
+    chunks.push(...splitSubtitleByWords(part, maxWords, maxChars));
+  });
+
+  return chunks.filter(Boolean);
+};
+
+const mergeChunksToCount = (chunks, targetCount) => {
+  if (!Array.isArray(chunks) || !chunks.length) return [];
+  if (targetCount <= 1) return [chunks.join(' ').trim()];
+  if (chunks.length === targetCount) return chunks;
+
+  const merged = [];
+  for (let i = 0; i < targetCount; i += 1) {
+    const from = Math.floor((i * chunks.length) / targetCount);
+    const to = Math.floor(((i + 1) * chunks.length) / targetCount);
+    const piece = chunks.slice(from, to).join(' ').trim();
+    if (piece) {
+      merged.push(piece);
+    }
+  }
+
+  return merged.length ? merged : [chunks.join(' ').trim()];
+};
+
+const splitTextToChunkCount = (text, chunkCount, maxWords = 16, maxChars = 96) => {
+  const normalized = sanitizeSubtitleText(text, 5000);
+  if (chunkCount <= 1) return [normalized];
+  if (!normalized) return Array.from({ length: chunkCount }, () => '');
+
+  const natural = buildSubtitleChunks(normalized, maxWords, maxChars);
+  if (natural.length >= chunkCount) {
+    return natural.length === chunkCount ? natural : mergeChunksToCount(natural, chunkCount);
+  }
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const averageWords = Math.max(1, Math.ceil(words.length / chunkCount));
+  const rawWordChunks = splitSubtitleByWords(normalized, averageWords, maxChars);
+  const balanced = rawWordChunks.length >= chunkCount
+    ? mergeChunksToCount(rawWordChunks, chunkCount)
+    : [...rawWordChunks];
+
+  while (balanced.length < chunkCount) {
+    balanced.push(balanced[balanced.length - 1] || normalized);
+  }
+
+  return balanced;
+};
+
+const HARD_BREAK_CHARS = new Set(['.', ',', '!', '?', ';', ':', '\u3002', '\uff01', '\uff1f', '\uff1b', '\uff1a', '\u2026']);
+
+const findNearestSplitIndex = (text, targetIndex, minIndex, maxIndex) => {
+  const source = String(text || '');
+  const safeMin = Math.max(1, Number(minIndex || 1));
+  const safeMax = Math.min(source.length - 1, Number(maxIndex || source.length - 1));
+  if (safeMin >= safeMax) return safeMin;
+
+  const safeTarget = Math.max(safeMin, Math.min(safeMax, Number(targetIndex || safeMin)));
+  const maxRadius = 24;
+
+  for (let radius = 0; radius <= maxRadius; radius += 1) {
+    const left = safeTarget - radius;
+    const right = safeTarget + radius;
+
+    if (left > safeMin && left < safeMax && HARD_BREAK_CHARS.has(source[left])) {
+      return left + 1;
+    }
+    if (right > safeMin && right < safeMax && HARD_BREAK_CHARS.has(source[right])) {
+      return right + 1;
+    }
+  }
+
+  for (let radius = 0; radius <= maxRadius; radius += 1) {
+    const left = safeTarget - radius;
+    const right = safeTarget + radius;
+
+    if (left > safeMin && left < safeMax && /\s/.test(source[left])) {
+      return left;
+    }
+    if (right > safeMin && right < safeMax && /\s/.test(source[right])) {
+      return right;
+    }
+  }
+
+  return safeTarget;
+};
+
+const splitTextByReferenceChunks = (text, referenceChunks, maxWords = 16, maxChars = 96) => {
+  const normalized = sanitizeSubtitleText(text, 5000);
+  const targetCount = Array.isArray(referenceChunks) ? referenceChunks.length : 0;
+
+  if (targetCount <= 1) return [normalized];
+  if (!normalized) return Array.from({ length: targetCount }, () => '');
+
+  const natural = buildSubtitleChunks(normalized, maxWords, maxChars);
+  if (natural.length === targetCount) {
+    return natural;
+  }
+
+  const weights = referenceChunks.map((chunk) => {
+    const words = String(chunk || '').trim().split(/\s+/).filter(Boolean).length;
+    return Math.max(1, words || String(chunk || '').length);
+  });
+  const totalWeight = Math.max(1, weights.reduce((sum, item) => sum + item, 0));
+
+  const slices = [];
+  let cursor = 0;
+  let accumulatedWeight = 0;
+
+  for (let i = 0; i < targetCount; i += 1) {
+    if (i === targetCount - 1) {
+      slices.push(normalized.slice(cursor).trim());
+      break;
+    }
+
+    accumulatedWeight += weights[i];
+    const targetIndex = Math.round((normalized.length * accumulatedWeight) / totalWeight);
+    const remainingSegments = targetCount - i - 1;
+    const minIndex = cursor + 1;
+    const maxIndex = Math.max(minIndex, normalized.length - remainingSegments);
+    const splitIndex = findNearestSplitIndex(normalized, targetIndex, minIndex, maxIndex);
+
+    slices.push(normalized.slice(cursor, splitIndex).trim());
+    cursor = splitIndex;
+  }
+
+  const allFilled = slices.length === targetCount && slices.every((item) => item);
+  if (allFilled) {
+    return slices;
+  }
+
+  const fallback = splitTextToChunkCount(normalized, targetCount, maxWords, maxChars);
+  return fallback.length === targetCount ? fallback : Array.from({ length: targetCount }, (_, index) => fallback[index] || '');
+};
+
+const normalizeDbSubtitles = (rows) => {
+  if (!Array.isArray(rows) || !rows.length) return [];
+
+  const normalizedRows = [];
+
+  rows.forEach((row, rowIndex) => {
+    const start = Number(row.start_time);
+    const rawEnd = Number(row.end_time);
+
+    if (!Number.isFinite(start)) return;
+
+    const end = Number.isFinite(rawEnd) && rawEnd > start ? rawEnd : start + 1;
+    const duration = Math.max(0.2, end - start);
+
+    const enText = sanitizeSubtitleText(row.en_text, 6000);
+    const vnText = sanitizeSubtitleText(row.vn_text, 6000);
+    const sourceText = enText || vnText;
+    if (!sourceText) return;
+
+    const candidateChunks = buildSubtitleChunks(sourceText);
+    const splitNeeded = candidateChunks.length > 1
+      && (sourceText.length > 96 || sourceText.split(/\s+/).length > 18 || duration > 7);
+
+    if (!splitNeeded) {
+      normalizedRows.push({
+        ...row,
+        start_time: start,
+        end_time: end,
+        en_text: enText,
+        vn_text: vnText,
+      });
+      return;
+    }
+
+    const maxByDuration = Math.max(1, Math.floor(duration / DB_SUBTITLE_CHUNK_MIN_DURATION));
+    const chunkCount = Math.max(1, Math.min(candidateChunks.length, maxByDuration));
+    const enChunks = chunkCount === candidateChunks.length
+      ? candidateChunks
+      : mergeChunksToCount(candidateChunks, chunkCount);
+    const vnChunks = splitTextByReferenceChunks(vnText, enChunks);
+
+    enChunks.forEach((chunk, index) => {
+      const segStart = Number((start + ((duration * index) / enChunks.length)).toFixed(3));
+      const segEnd = index === enChunks.length - 1
+        ? end
+        : Number((start + ((duration * (index + 1)) / enChunks.length)).toFixed(3));
+
+      normalizedRows.push({
+        ...row,
+        id: `${row.id || rowIndex}-${index}`,
+        start_time: segStart,
+        end_time: segEnd,
+        en_text: chunk,
+        vn_text: vnChunks[index] || vnText || '',
+        word_timings: null,
+      });
+    });
+  });
+
+  return normalizedRows.sort((a, b) => Number(a.start_time) - Number(b.start_time));
+};
+
 const toDuration = (seconds) => {
   const safe = Math.max(0, Math.floor(Number(seconds || 0)));
   const mm = Math.floor(safe / 60);
   const ss = safe % 60;
   return `${mm}:${String(ss).padStart(2, '0')}`;
+};
+
+const normalizeTrackValue = (value, fallback = 'chinese') => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (['english', 'en', 'eng'].includes(normalized)) return 'english';
+  if (['chinese', 'cn', 'zh', 'mandarin'].includes(normalized)) return 'chinese';
+  return fallback;
+};
+
+// Trích xuất YouTube video ID từ URL
+const extractYouTubeId = (url) => {
+  if (!url) return null;
+  const match = url.match(/(?:youtu\.be\/|v=|embed\/)([^#&?]{11})/);
+  return match ? match[1] : null;
+};
+
+// Component hiển thị phụ đề với highlight từng chữ theo YouTube style
+const WordHighlight = ({ text, words, currentTime }) => {
+  const normalizedText = String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const safeText = sanitizeSubtitleText(normalizedText);
+  const isTrimmed = safeText.length < normalizedText.length;
+
+  if (!words || words.length === 0 || words.length > SUBTITLE_MAX_HIGHLIGHT_WORDS || isTrimmed) {
+    return <span>{safeText}</span>;
+  }
+
+  // Tìm chữ đang được nói (chữ mà currentTime >= t của nó, và t của chữ kế < currentTime)
+  const currentWordIndex = words.reduce((acc, w, i) => {
+    return currentTime >= w.t ? i : acc;
+  }, -1);
+  const useWordSpacing = /\s/.test(normalizedText);
+
+  return (
+    <span>
+      {words.map((w, i) => (
+        <span
+          key={i}
+          style={{
+            color: i <= currentWordIndex ? '#FACC15' : 'white',
+            fontWeight: i === currentWordIndex ? '700' : '500',
+            transition: 'color 0.1s ease',
+          }}
+        >
+          {`${String(w.word || '').trim()}${useWordSpacing && i < words.length - 1 ? ' ' : ''}`}
+        </span>
+      ))}
+    </span>
+  );
+};
+
+const getLevelLabel = (track, level) => {
+  const safeLevel = Number(level || 1);
+  return track === 'english' ? `Level ${safeLevel}` : `HSK ${safeLevel}`;
 };
 
 const withProxy = (url) => {
@@ -185,6 +516,13 @@ const Player = () => {
   const navigate = useNavigate();
   const videoRef = useRef(null);
   const sentenceListRef = useRef(null);
+  const ytPlayerRef = useRef(null);
+  const playerContainerRef = useRef(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [showControls, setShowControls] = useState(true);  // YouTube IFrame API player instance
+  const [volume, setVolume] = useState(1);
+  const [isMuted, setIsMuted] = useState(false);
+  const ytPollRef = useRef(null);    // setInterval handle cho YouTube sync
   const mediaRecorderRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const recordChunksRef = useRef([]);
@@ -214,6 +552,9 @@ const Player = () => {
   const [subVi, setSubVi] = useState([]);
   const [subPinyin, setSubPinyin] = useState([]);
 
+  // Phụ đề từ database (cho video YouTube)
+  const [dbSubtitles, setDbSubtitles] = useState([]);
+
   const [showCn, setShowCn] = useState(true);
   const [showVi, setShowVi] = useState(true);
   const [showPinyin, setShowPinyin] = useState(false);
@@ -233,11 +574,13 @@ const Player = () => {
   const [pronunciationState, setPronunciationState] = useState({ key: '', value: 'idle' });
 
   const timelineSubtitles = useMemo(() => {
+    // Ưu tiên phụ đề từ DB (YouTube)
+    if (dbSubtitles.length) return dbSubtitles.map(s => ({ start: Number(s.start_time), end: Number(s.end_time), text: s.en_text }));
     if (subCn.length) return subCn;
     if (subVi.length) return subVi;
     if (subPinyin.length) return subPinyin;
     return [];
-  }, [subCn, subVi, subPinyin]);
+  }, [dbSubtitles, subCn, subVi, subPinyin]);
 
   const currentSubtitleIndex = useMemo(
     () => findSubtitleIndex(timelineSubtitles, currentTime),
@@ -245,14 +588,29 @@ const Player = () => {
   );
 
   const currentCnSubtitle = useMemo(() => {
+    // Nếu có phụ đề từ DB (YouTube), dùng đó
+    if (dbSubtitles.length) {
+      const found = dbSubtitles.find(s => currentTime >= Number(s.start_time) && currentTime <= Number(s.end_time));
+      return found ? {
+        text: found.en_text,
+        vi_text: found.vn_text,
+        start: Number(found.start_time),
+        end: Number(found.end_time),
+        words: parseWordTimings(found.word_timings)
+      } : null;
+    }
     const index = findSubtitleIndex(subCn, currentTime);
     return index >= 0 ? subCn[index] : null;
-  }, [subCn, currentTime]);
+  }, [dbSubtitles, subCn, currentTime]);
 
   const currentViSubtitle = useMemo(() => {
+    if (dbSubtitles.length) {
+      const found = dbSubtitles.find(s => currentTime >= Number(s.start_time) && currentTime <= Number(s.end_time));
+      return found ? { text: found.vn_text, start: Number(found.start_time), end: Number(found.end_time) } : null;
+    }
     const index = findSubtitleIndex(subVi, currentTime);
     return index >= 0 ? subVi[index] : null;
-  }, [subVi, currentTime]);
+  }, [dbSubtitles, subVi, currentTime]);
 
   const currentPinyinSubtitle = useMemo(() => {
     const index = findSubtitleIndex(subPinyin, currentTime);
@@ -543,11 +901,15 @@ const Player = () => {
     }
   };
 
-  const fetchRelated = async (categoryId, excludeVideoId) => {
+  const fetchRelated = async (categoryId, excludeVideoId, track) => {
     try {
       let url = `${API_BASE}/product?limit=6&status=published`;
       if (categoryId) {
         url += `&category=${categoryId}`;
+      }
+      const normalizedTrack = normalizeTrackValue(track, 'all');
+      if (normalizedTrack !== 'all') {
+        url += `&track=${normalizedTrack}`;
       }
       const response = await fetch(url);
       const data = await response.json();
@@ -666,7 +1028,7 @@ const Player = () => {
     }
   };
 
-  const pickChineseVoice = () => {
+  const pickPreferredVoice = (track = 'chinese') => {
     if (typeof window === 'undefined' || !window.speechSynthesis) {
       return null;
     }
@@ -674,6 +1036,12 @@ const Player = () => {
     const voices = window.speechSynthesis.getVoices();
     if (!Array.isArray(voices) || !voices.length) {
       return null;
+    }
+
+    if (track === 'english') {
+      return voices.find((voice) => /en-US|en-GB|english/i.test(`${voice.lang} ${voice.name}`))
+        || voices.find((voice) => String(voice.lang || '').toLowerCase().startsWith('en'))
+        || null;
     }
 
     return voices.find((voice) => /zh-CN|cmn-CN|zh-TW|chinese|mandarin/i.test(`${voice.lang} ${voice.name}`))
@@ -721,13 +1089,18 @@ const Player = () => {
     setPronunciationState({ key: '', value: 'idle' });
   };
 
-  const playWordByAudioFallback = (word, key) => {
+  const playWordByAudioFallback = (word, key, track = 'chinese') => {
     const encoded = encodeURIComponent(word);
-    const sources = [
-      `${API_BASE}/blog/tts?word=${encoded}`,
-      `https://dict.youdao.com/dictvoice?audio=${encoded}&type=0`,
-      `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=zh-CN&q=${encoded}`,
-    ];
+    const sources = track === 'english'
+      ? [
+        `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-US&q=${encoded}`,
+        `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en-GB&q=${encoded}`,
+      ]
+      : [
+        `${API_BASE}/blog/tts?word=${encoded}`,
+        `https://dict.youdao.com/dictvoice?audio=${encoded}&type=0`,
+        `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=zh-CN&q=${encoded}`,
+      ];
 
     const trySource = (index) => {
       if (index >= sources.length) {
@@ -792,7 +1165,7 @@ const Player = () => {
     }
 
     if (typeof window === 'undefined' || !window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
-      playWordByAudioFallback(word, key);
+      playWordByAudioFallback(word, key, normalizeTrackValue(videoData?.language_track, 'chinese'));
       return;
     }
 
@@ -805,23 +1178,25 @@ const Player = () => {
     speech.cancel();
     clearPronunciationResetTimer();
 
+    const activeTrack = normalizeTrackValue(videoData?.language_track, 'chinese');
+
     const utterance = new SpeechSynthesisUtterance(word);
-    utterance.lang = 'zh-CN';
+    utterance.lang = activeTrack === 'english' ? 'en-US' : 'zh-CN';
     utterance.rate = 0.9;
     utterance.pitch = 1;
     utterance.volume = 1;
 
-    const voice = pickChineseVoice();
+    const voice = pickPreferredVoice(activeTrack);
     if (voice) {
       utterance.voice = voice;
-      utterance.lang = voice.lang || 'zh-CN';
+      utterance.lang = voice.lang || utterance.lang;
     }
 
     let started = false;
     const fallbackTimer = window.setTimeout(() => {
       if (!started) {
         speech.cancel();
-        playWordByAudioFallback(word, key);
+        playWordByAudioFallback(word, key, activeTrack);
       }
     }, 1200);
 
@@ -849,7 +1224,7 @@ const Player = () => {
         return;
       }
 
-      playWordByAudioFallback(word, key);
+      playWordByAudioFallback(word, key, activeTrack);
     };
 
     setPronunciationState({ key, value: 'loading' });
@@ -908,20 +1283,35 @@ const Player = () => {
 
         setVideoData(payload);
 
-        const [cn, vi, py] = await Promise.all([
-          loadVttFile(payload.subtitle_cn_url),
-          loadVttFile(payload.subtitle_vi_url),
-          loadVttFile(payload.subtitle_pinyin_url),
-        ]);
-
-        setSubCn(cn);
-        setSubVi(vi);
-        setSubPinyin(py);
+        // Kiểm tra xem là video YouTube không
+        const ytId = extractYouTubeId(payload.video_url);
+        if (ytId) {
+          // Load phụ đề từ database cho video YouTube
+          try {
+            const subRes = await fetch(`${API_BASE}/youtube/subtitles/${payload.id}`);
+            const subData = await subRes.json();
+            if (subData.success && Array.isArray(subData.data)) {
+              setDbSubtitles(normalizeDbSubtitles(subData.data));
+            }
+          } catch (e) {
+            console.error('Error loading DB subtitles:', e);
+          }
+        } else {
+          // Video thường: load sub từ file VTT
+          const [cn, vi, py] = await Promise.all([
+            loadVttFile(payload.subtitle_cn_url),
+            loadVttFile(payload.subtitle_vi_url),
+            loadVttFile(payload.subtitle_pinyin_url),
+          ]);
+          setSubCn(cn);
+          setSubVi(vi);
+          setSubPinyin(py);
+        }
 
         await Promise.all([
           fetchVocabulary(payload.id),
           fetchSlang(payload.id),
-          fetchRelated(payload.category_id, payload.id),
+          fetchRelated(payload.category_id, payload.id, payload.language_track),
           loadSavedWords(),
           syncCurrentUser(),
         ]);
@@ -995,12 +1385,102 @@ const Player = () => {
     };
   }, []);
 
+  // YouTube IFrame API: load script + khởi tạo player để lấy currentTime
+  useEffect(() => {
+    if (!videoData?.video_url) return;
+    const ytId = extractYouTubeId(videoData.video_url);
+    if (!ytId) return;
+
+    let pollInterval = null;
+    let retryTimeout = null;
+
+    const startPolling = () => {
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(() => {
+        try {
+          const t = ytPlayerRef.current?.getCurrentTime?.();
+          const d = ytPlayerRef.current?.getDuration?.();
+          if (typeof d === 'number' && Number.isFinite(d) && d > 0) {
+            setDuration((prev) => (Math.abs(prev - d) > 0.25 ? d : prev));
+          }
+          if (typeof t === 'number') {
+            setCurrentTime(t);
+            setWatchedSeconds(prev => Math.max(prev, Math.floor(t)));
+          }
+        } catch {}
+      }, 300);
+      ytPollRef.current = pollInterval;
+    };
+
+    const initPlayer = () => {
+      if (!window.YT?.Player) return;
+      const el = document.getElementById('yt-iframe-player');
+      if (!el) {
+        // Iframe chưa render xong, thử lại sau 200ms
+        retryTimeout = setTimeout(initPlayer, 200);
+        return;
+      }
+      if (ytPlayerRef.current) {
+        try { ytPlayerRef.current.destroy(); } catch {}
+      }
+      ytPlayerRef.current = new window.YT.Player(el, {
+        events: {
+          onReady: (event) => {
+            const d = event?.target?.getDuration?.();
+            if (typeof d === 'number' && Number.isFinite(d) && d > 0) {
+              setDuration(d);
+            }
+            const safeVolume = Math.round(Math.max(0, Math.min(1, Number(volume || 0))) * 100);
+            if (typeof event?.target?.setVolume === 'function') {
+              event.target.setVolume(safeVolume);
+            }
+            if (isMuted || safeVolume === 0) {
+              event?.target?.mute?.();
+            } else {
+              event?.target?.unMute?.();
+            }
+            if (startAt > 0 && typeof event?.target?.seekTo === 'function') {
+              event.target.seekTo(startAt, true);
+            }
+            startPolling();
+          },
+          onStateChange: (e) => setIsPlaying(e.data === 1),
+        }
+      });
+    };
+
+    if (window.YT?.Player) {
+      // API đã load sẵn
+      retryTimeout = setTimeout(initPlayer, 300);
+    } else {
+      // Load API lần đầu
+      if (!document.getElementById('yt-api-script')) {
+        const tag = document.createElement('script');
+        tag.id = 'yt-api-script';
+        tag.src = 'https://www.youtube.com/iframe_api';
+        document.body.appendChild(tag);
+      }
+      const prev = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => {
+        prev?.();
+        retryTimeout = setTimeout(initPlayer, 300);
+      };
+    }
+
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+      if (retryTimeout) clearTimeout(retryTimeout);
+    };
+  }, [videoData?.video_url, startAt]);
+
   useEffect(() => {
     if (!videoRef.current || !videoData?.id) return undefined;
 
     const node = videoRef.current;
     const onLoadedMeta = () => {
       setDuration(Number(node.duration || 0));
+      node.volume = Math.max(0, Math.min(1, Number(volume || 0)));
+      node.muted = isMuted || Number(volume || 0) <= 0;
       if (startAt > 0) {
         node.currentTime = startAt;
       }
@@ -1018,12 +1498,18 @@ const Player = () => {
 
     node.addEventListener('loadedmetadata', onLoadedMeta);
     node.addEventListener('timeupdate', onTimeUpdate);
+    const pPlay = () => setIsPlaying(true);
+    const pPause = () => setIsPlaying(false);
+    node.addEventListener('play', pPlay);
+    node.addEventListener('pause', pPause);
 
     return () => {
       node.removeEventListener('loadedmetadata', onLoadedMeta);
       node.removeEventListener('timeupdate', onTimeUpdate);
+      node.removeEventListener('play', pPlay);
+      node.removeEventListener('pause', pPause);
     };
-  }, [loopEnabled, loopRange, videoId, startAt, videoData?.id]);
+  }, [loopEnabled, loopRange, videoId, startAt, videoData?.id, volume, isMuted]);
 
   useEffect(() => {
     stopShadowRecording();
@@ -1051,16 +1537,123 @@ const Player = () => {
     }
   }, [currentSubtitleIndex]);
 
+
+  const togglePlay = () => {
+    if (extractYouTubeId(videoData?.video_url)) {
+      if (ytPlayerRef.current && typeof ytPlayerRef.current.getPlayerState === 'function') {
+        const state = ytPlayerRef.current.getPlayerState();
+        if (state === 1) ytPlayerRef.current.pauseVideo();
+        else ytPlayerRef.current.playVideo();
+      }
+    } else if (videoRef.current) {
+      if (!videoRef.current.paused) videoRef.current.pause();
+      else videoRef.current.play();
+    }
+  };
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      playerContainerRef.current?.requestFullscreen?.().catch(e=>console.log(e));
+    } else {
+      document.exitFullscreen?.();
+    }
+  };
+
+  const seekMediaTo = (time, shouldPlay = false) => {
+    const target = Number(time);
+    if (!Number.isFinite(target) || target < 0) return;
+
+    if (extractYouTubeId(videoData?.video_url)) {
+      if (!ytPlayerRef.current) return;
+      if (typeof ytPlayerRef.current.seekTo === 'function') {
+        ytPlayerRef.current.seekTo(target, true);
+      }
+      if (shouldPlay && typeof ytPlayerRef.current.playVideo === 'function') {
+        ytPlayerRef.current.playVideo();
+      }
+      setCurrentTime(target);
+      return;
+    }
+
+    if (!videoRef.current) return;
+    videoRef.current.currentTime = target;
+    if (shouldPlay) {
+      videoRef.current.play();
+    }
+  };
+
+  const stepMediaBy = (deltaSeconds) => {
+    const current = Number(currentTime || 0);
+    const maxDuration = Number(duration || 0);
+    const nextTime = current + Number(deltaSeconds || 0);
+    const capped = maxDuration > 0 ? Math.min(nextTime, maxDuration) : nextTime;
+    seekMediaTo(Math.max(0, capped));
+  };
+
+  const setMediaVolume = (nextVolume) => {
+    const safe = Math.max(0, Math.min(1, Number(nextVolume || 0)));
+    const shouldMute = safe <= 0;
+    setVolume(safe);
+    setIsMuted(shouldMute);
+
+    if (extractYouTubeId(videoData?.video_url)) {
+      if (!ytPlayerRef.current) return;
+      if (typeof ytPlayerRef.current.setVolume === 'function') {
+        ytPlayerRef.current.setVolume(Math.round(safe * 100));
+      }
+      if (shouldMute) {
+        ytPlayerRef.current.mute?.();
+      } else {
+        ytPlayerRef.current.unMute?.();
+      }
+      return;
+    }
+
+    if (!videoRef.current) return;
+    videoRef.current.volume = safe;
+    videoRef.current.muted = shouldMute;
+  };
+
+  const toggleMute = () => {
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+
+    if (extractYouTubeId(videoData?.video_url)) {
+      if (!ytPlayerRef.current) return;
+      if (nextMuted) {
+        ytPlayerRef.current.mute?.();
+      } else {
+        if (volume <= 0) {
+          setMediaVolume(0.6);
+          return;
+        }
+        ytPlayerRef.current.unMute?.();
+      }
+      return;
+    }
+
+    if (!videoRef.current) return;
+    if (!nextMuted && videoRef.current.volume <= 0) {
+      setMediaVolume(0.6);
+      return;
+    }
+    videoRef.current.muted = nextMuted;
+  };
+
+  const getVolumeIcon = () => {
+    if (isMuted || volume <= 0) return 'volume_off';
+    if (volume < 0.5) return 'volume_down';
+    return 'volume_up';
+  };
+
   const jumpToSentence = (index) => {
-    if (!videoRef.current || index < 0 || index >= timelineSubtitles.length) return;
-    videoRef.current.currentTime = timelineSubtitles[index].start;
-    videoRef.current.play();
+    if (index < 0 || index >= timelineSubtitles.length) return;
+    seekMediaTo(timelineSubtitles[index].start, true);
   };
 
   const repeatCurrentSentence = () => {
-    if (!currentSubtitle || !videoRef.current) return;
-    videoRef.current.currentTime = currentSubtitle.start;
-    videoRef.current.play();
+    if (!currentSubtitle) return;
+    seekMediaTo(currentSubtitle.start, true);
   };
 
   const toggleLoopCurrentSentence = () => {
@@ -1087,6 +1680,8 @@ const Player = () => {
     );
   }
 
+  const currentTrack = normalizeTrackValue(videoData.language_track, 'chinese');
+
   return (
     <div className="min-h-screen pb-10 text-glass-main relative">
       <div className="absolute top-24 left-[-4rem] w-44 h-44 bg-blue-300/35 blur-3xl rounded-full pointer-events-none" />
@@ -1098,6 +1693,9 @@ const Player = () => {
           <div className="order-3 w-full text-center min-w-0 sm:order-2 sm:flex-1">
             <h1 className="font-bold text-blue-950 truncate">{videoData.title}</h1>
             <p className="text-sm text-glass-subtle truncate">{videoData.title_cn || ''}</p>
+            <span className="inline-flex mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-white/75 text-blue-800">
+              {currentTrack === 'english' ? 'Lộ trình tiếng Anh' : 'Lộ trình tiếng Trung'}
+            </span>
             <p className="text-xs text-glass-subtle mt-0.5 sm:hidden">Đã xem: {toDuration(watchedSeconds)}</p>
           </div>
           <div className="order-2 ml-auto sm:order-3 flex items-center gap-2">
@@ -1127,33 +1725,121 @@ const Player = () => {
 
       <main className="max-w-7xl mx-auto px-3 sm:px-4 pt-4 sm:pt-6 grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6">
         <section className="xl:col-span-2 space-y-4">
-          <div className="rounded-2xl overflow-hidden bg-black relative shadow-lg">
-            <video
-              ref={videoRef}
-              src={videoData.video_url}
-              controls
-              className="w-full aspect-video"
-              preload="metadata"
-            />
+          <div 
+            ref={playerContainerRef}
+            className="rounded-2xl overflow-hidden bg-black relative shadow-lg group aspect-video"
+            onMouseEnter={() => setShowControls(true)}
+            onMouseLeave={() => isPlaying && setShowControls(false)}
+            onTouchStart={() => setShowControls(true)}
+            onMouseMove={() => { setShowControls(true); clearTimeout(window.controlsTimeout); window.controlsTimeout = setTimeout(() => isPlaying && setShowControls(false), 2500); }}
+          >
+            {extractYouTubeId(videoData.video_url) ? (
+              <div className="absolute inset-0 w-full h-full pointer-events-none overflow-hidden">
+                <iframe
+                  id="yt-iframe-player"
+                  className="w-[110%] h-[110%] -ml-[5%] -mt-[5%]" 
+                  src={`https://www.youtube.com/embed/${extractYouTubeId(videoData.video_url)}?enablejsapi=1&rel=0&modestbranding=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&playsinline=1`}
+                  title={videoData.title}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              </div>
+            ) : (
+              <video
+                ref={videoRef}
+                src={videoData.video_url}
+                className="w-full h-full object-contain cursor-pointer"
+                preload="metadata"
+                onClick={togglePlay}
+              />
+            )}
 
-            <div className="absolute left-0 right-0 bottom-9 md:bottom-11 px-4 pb-2 pt-8 pointer-events-none">
+            {extractYouTubeId(videoData.video_url) && (
+              <div className="absolute inset-0 z-10 cursor-pointer" onClick={togglePlay}></div>
+            )}
+
+            {/* Thumbnail Overlay to block YouTube's native UI before playing starts */}
+            {extractYouTubeId(videoData.video_url) && !isPlaying && currentTime === 0 && (
+              <div className="absolute inset-0 z-15 bg-black cursor-pointer flex flex-col items-center justify-center transition-opacity duration-300 pointer-events-auto" onClick={togglePlay}>
+                <img src={videoData.thumbnail_url} alt="Cover" className="absolute inset-0 w-full h-full object-cover opacity-70" />
+                <div className="relative z-20 w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(37,99,235,0.7)] hover:bg-blue-500 hover:scale-105 transition-transform duration-200">
+                  <span className="material-symbols-outlined text-white text-4xl ml-1">play_arrow</span>
+                </div>
+              </div>
+            )}
+
+            {/* Overlay phụ đề 2 dòng chung */}
+            <div className={`absolute bottom-4 md:bottom-8 left-0 right-0 px-4 pb-4 pt-8 pointer-events-none text-center z-20 transition-opacity duration-300 ${(!showControls && isPlaying) ? 'opacity-100' : ''}`}>
               {showCn && currentCnSubtitle && (
-                <div className="text-white text-center font-medium text-base md:text-lg [text-shadow:0_2px_8px_rgba(0,0,0,0.7)]">{currentCnSubtitle.text}</div>
+                <div className="inline-block max-w-[94%] text-white font-bold text-base sm:text-lg md:text-xl lg:text-2xl leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)] mb-1">
+                  {extractYouTubeId(videoData.video_url) && currentCnSubtitle.words ? (
+                     <WordHighlight text={currentCnSubtitle.text} words={currentCnSubtitle.words} currentTime={currentTime} />
+                  ) : sanitizeSubtitleText(currentCnSubtitle.text)}
+                </div>
               )}
               {showVi && currentViSubtitle && (
-                <div className="text-white/90 text-center text-sm mt-1 [text-shadow:0_2px_8px_rgba(0,0,0,0.65)]">{currentViSubtitle.text}</div>
+                <div className="block w-full max-w-[94%] mx-auto text-[#f1c40f] font-semibold text-xs sm:text-sm md:text-base mt-1 leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)]">
+                  {sanitizeSubtitleText(currentViSubtitle.text, 170)}
+                </div>
               )}
               {showPinyin && currentPinyinSubtitle && (
-                <div className="text-blue-200 text-center text-sm mt-1 [text-shadow:0_2px_8px_rgba(0,0,0,0.65)]">{currentPinyinSubtitle.text}</div>
+                  <div className="block w-full max-w-[94%] mx-auto text-blue-200 font-medium text-[11px] sm:text-xs md:text-sm mt-1 leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)]">{sanitizeSubtitleText(currentPinyinSubtitle.text, 170)}</div>
               )}
+            </div>
+
+            {/* Custom Control Bar */}
+            <div className={`absolute bottom-0 left-0 right-0 p-3 pt-12 bg-gradient-to-t from-black/90 to-transparent z-30 transition-opacity duration-300 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+               <div className="flex items-center gap-4 text-white px-2">
+                 <button onClick={() => stepMediaBy(-10)} className="hover:text-blue-400 transition" title="Lùi 10 giây">
+                   <span className="material-symbols-outlined text-3xl">replay_10</span>
+                 </button>
+                 <button onClick={togglePlay} className="hover:text-blue-400 transition">
+                   <span className="material-symbols-outlined text-3xl">{isPlaying ? 'pause' : 'play_arrow'}</span>
+                 </button>
+                 <button onClick={() => stepMediaBy(10)} className="hover:text-blue-400 transition" title="Tiến 10 giây">
+                   <span className="material-symbols-outlined text-3xl">forward_10</span>
+                 </button>
+                 <div className="flex-1 h-1.5 bg-white/30 rounded-full cursor-pointer relative group/progress" onClick={(e) => {
+                     const rect = e.currentTarget.getBoundingClientRect();
+                     const percent = (e.clientX - rect.left) / rect.width;
+                     const newTime = percent * duration;
+                    seekMediaTo(newTime);
+                 }}>
+                    <div className="absolute top-0 left-0 h-full bg-[#ff0000] rounded-full relative" style={{ width: `${(currentTime/duration)*100 || 0}%` }}>
+                        <div className="absolute right-0 top-1/2 -mt-1.5 w-3 h-3 bg-white rounded-full shadow opacity-0 group-hover/progress:opacity-100 transform translate-x-1/2"></div>
+                    </div>
+                 </div>
+                 <div className="text-sm font-medium tabular-nums">{toDuration(currentTime)} / {toDuration(duration)}</div>
+                 <div className="flex items-center gap-2 min-w-[94px] sm:min-w-[140px]">
+                   <button onClick={toggleMute} className="hover:text-blue-400 transition" title={isMuted ? 'Bật tiếng' : 'Tắt tiếng'}>
+                     <span className="material-symbols-outlined text-2xl">{getVolumeIcon()}</span>
+                   </button>
+                   <input
+                     type="range"
+                     min="0"
+                     max="1"
+                     step="0.01"
+                     value={volume}
+                     onChange={(e) => setMediaVolume(Number(e.target.value))}
+                     className="w-14 sm:w-24 accent-blue-500 cursor-pointer"
+                     aria-label="Âm lượng"
+                   />
+                   <span className="hidden sm:inline text-xs text-white/80 tabular-nums w-9 text-right">{Math.round(volume * 100)}%</span>
+                 </div>
+                 <button onClick={toggleFullscreen} className="hover:text-blue-400 transition">
+                   <span className="material-symbols-outlined text-2xl">{!document.fullscreenElement?'fullscreen':'fullscreen_exit'}</span>
+                 </button>
+               </div>
             </div>
           </div>
 
           <div className="glass-surface rounded-2xl p-4 border border-white/70">
             <div className="flex flex-wrap gap-2 items-center">
-              <button onClick={() => setShowCn((v) => !v)} className={`px-3 py-1.5 rounded-lg text-sm border transition ${showCn ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>CN</button>
+              <button onClick={() => setShowCn((v) => !v)} className={`px-3 py-1.5 rounded-lg text-sm border transition ${showCn ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>{currentTrack === 'english' ? 'EN' : 'CN'}</button>
               <button onClick={() => setShowVi((v) => !v)} className={`px-3 py-1.5 rounded-lg text-sm border transition ${showVi ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>VI</button>
-              <button onClick={() => setShowPinyin((v) => !v)} className={`px-3 py-1.5 rounded-lg text-sm border transition ${showPinyin ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>Pinyin</button>
+              {currentTrack === 'chinese' && (
+                <button onClick={() => setShowPinyin((v) => !v)} className={`px-3 py-1.5 rounded-lg text-sm border transition ${showPinyin ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>Pinyin</button>
+              )}
 
               <div className="h-5 w-px bg-blue-200/60 mx-1" />
 
@@ -1185,7 +1871,7 @@ const Player = () => {
                   />
                   <div className="min-w-0">
                     <h3 className="text-sm font-medium text-blue-950 line-clamp-2">{item.title}</h3>
-                    <p className="text-xs text-glass-subtle mt-1">HSK {item.hsk_level} • {toDuration(item.duration)}</p>
+                    <p className="text-xs text-glass-subtle mt-1">{getLevelLabel(normalizeTrackValue(item.language_track, 'chinese'), item.hsk_level)} • {toDuration(item.duration)}</p>
                   </div>
                 </Link>
               )) : (
@@ -1223,9 +1909,9 @@ const Player = () => {
                     onClick={() => jumpToSentence(idx)}
                     className={`w-full text-left p-3 rounded-xl transition border ${idx === currentSubtitleIndex ? 'glass-surface-strong border-blue-400/40' : 'glass-surface border-white/65 hover:bg-white/70'}`}
                   >
-                    <div className="text-xs text-glass-subtle mb-1">{toDuration(entry.start)}</div>
-                    <div className="text-sm text-blue-950">{entry.text}</div>
-                    {subVi[idx] && subVi[idx].text !== entry.text && <div className="text-xs text-glass-subtle mt-1">{subVi[idx].text}</div>}
+                    <div className="text-[11px] text-blue-500 font-semibold mb-1 tabular-nums">{toDuration(entry.start)}</div>
+                    <div className="text-[15px] text-slate-800 font-bold leading-snug">{entry.text}</div>
+                    {(dbSubtitles.length ? dbSubtitles[idx]?.vn_text : subVi[idx]?.text) != entry.text && (dbSubtitles.length ? dbSubtitles[idx]?.vn_text : subVi[idx]?.text) && <div className="text-[13.5px] text-slate-500 font-medium mt-1 leading-snug">{dbSubtitles.length ? dbSubtitles[idx]?.vn_text : subVi[idx]?.text}</div>}
                   </button>
                 )) : (
                   <p className="text-sm text-glass-subtle">Chưa có phụ đề.</p>

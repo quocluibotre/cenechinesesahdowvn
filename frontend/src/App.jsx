@@ -18,18 +18,6 @@ import ThemeToggleButton from './components/ui/ThemeToggleButton';
 const EXIT_DURATION = 180;
 const ENTER_DURATION = 360;
 
-const RequireAuth = ({ children }) => {
-  const location = useLocation();
-  const token = localStorage.getItem('token');
-
-  if (!token) {
-    const redirect = encodeURIComponent(`${location.pathname}${location.search}`);
-    return <Navigate to={`/login?redirect=${redirect}`} replace />;
-  }
-
-  return children;
-};
-
 const AnimatedRoutes = () => {
   const location = useLocation();
   const [displayLocation, setDisplayLocation] = useState(location);
@@ -70,10 +58,7 @@ const AnimatedRoutes = () => {
         <Route path="/home" element={<Home />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/player/:videoId" element={<Player />} />
-        <Route
-          path="/library"
-          element={<RequireAuth><Library /></RequireAuth>}
-        />
+        <Route path="/library" element={<Library />} />
         <Route
           path="*"
           element={(

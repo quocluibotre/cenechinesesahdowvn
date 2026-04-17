@@ -10,6 +10,7 @@ const adminRoutes = require('./routes/admin.routes');
 const categoryRoutes = require('./routes/category.routes');
 const uploadRoutes = require('./routes/upload.routes');
 const proxyUtils = require('./utils/proxy.utils');
+const youtubeRoutes = require('./routes/youtube.routes');
 // const bookingRoutes = require('./routes/booking.routes');
 
 const app = express();
@@ -114,6 +115,7 @@ app.use('/api/blog', blogRoutes);       // Vocabulary / Learning
 app.use('/api/admin', adminRoutes);     // Admin dashboard
 app.use('/api/category', categoryRoutes); // Categories
 app.use('/api/upload', uploadRoutes);   // Presigned upload
+app.use('/api/youtube', youtubeRoutes); // Youtube custom pipeline
 
 // Error Handling Middleware
 app.use((err, req, res, next) => {

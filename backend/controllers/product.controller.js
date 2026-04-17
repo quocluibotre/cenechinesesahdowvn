@@ -4,6 +4,35 @@ const path = require('path');
 const { deleteR2File } = require('../utils/r2-upload.utils');
 
 let slangTableEnsured = false;
+let videoTrackColumnEnsured = false;
+
+const TRACK_VALUES = new Set(['chinese', 'english']);
+
+const normalizeLanguageTrack = (rawValue, fallback = 'chinese') => {
+    const normalized = String(rawValue || '').trim().toLowerCase();
+
+    if (!normalized) {
+        return fallback;
+    }
+
+    if (normalized === 'all') {
+        return 'all';
+    }
+
+    if (['en', 'eng', 'english'].includes(normalized)) {
+        return 'english';
+    }
+
+    if (['zh', 'cn', 'zho', 'chinese', 'mandarin'].includes(normalized)) {
+        return 'chinese';
+    }
+
+    if (fallback === 'all') {
+        return 'all';
+    }
+
+    return TRACK_VALUES.has(fallback) ? fallback : 'chinese';
+};
 
 const ensureVideoSlangTable = async () => {
     if (slangTableEnsured) {
@@ -62,6 +91,44 @@ const ensureVideoSlangTable = async () => {
     `);
 
     slangTableEnsured = true;
+};
+
+const ensureVideoTrackColumn = async () => {
+    if (videoTrackColumnEnsured) {
+        return;
+    }
+
+    if (db.clientType === 'postgres') {
+        await db.promise().query(`
+            ALTER TABLE videos
+            ADD COLUMN IF NOT EXISTS language_track VARCHAR(16) NOT NULL DEFAULT 'chinese'
+        `);
+        await db.promise().query(`
+            UPDATE videos
+            SET language_track = 'chinese'
+            WHERE language_track IS NULL OR TRIM(language_track) = ''
+        `);
+        await db.promise().query('CREATE INDEX IF NOT EXISTS idx_videos_language_track ON videos(language_track)');
+
+        videoTrackColumnEnsured = true;
+        return;
+    }
+
+    const [columnRows] = await db.promise().query("SHOW COLUMNS FROM videos LIKE 'language_track'");
+    if (!columnRows.length) {
+        await db.promise().query(
+            "ALTER TABLE videos ADD COLUMN language_track ENUM('chinese','english') NOT NULL DEFAULT 'chinese' AFTER hsk_level"
+        );
+    }
+
+    await db.promise().query("UPDATE videos SET language_track = 'chinese' WHERE language_track IS NULL OR language_track = ''");
+
+    const [indexRows] = await db.promise().query("SHOW INDEX FROM videos WHERE Key_name = 'idx_videos_language_track'");
+    if (!indexRows.length) {
+        await db.promise().query('ALTER TABLE videos ADD INDEX idx_videos_language_track (language_track)');
+    }
+
+    videoTrackColumnEnsured = true;
 };
 
 const extractR2KeyFromPublicUrl = (fileUrl) => {
@@ -173,10 +240,22 @@ const resolveValidCategoryId = async (rawCategoryId) => {
 // Lấy danh sách Video (Convert từ get_videos.php)
 exports.getVideos = async (req, res) => {
     try {
-        const { hsk_level, category, search, status, page = 1, limit = 20, sort = 'newest' } = req.query;
+        await ensureVideoTrackColumn();
+
+        const {
+            hsk_level,
+            category,
+            search,
+            status,
+            page = 1,
+            limit = 20,
+            sort = 'newest',
+            track = 'all',
+        } = req.query;
         const safePage = Math.max(1, Number(page) || 1);
         const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20));
         const offset = (safePage - 1) * safeLimit;
+        const safeTrack = normalizeLanguageTrack(track, 'all');
         
         let query = 'SELECT v.*, c.name as category_name FROM videos v LEFT JOIN categories c ON v.category_id = c.id WHERE 1=1';
         const params = [];
@@ -189,6 +268,11 @@ exports.getVideos = async (req, res) => {
         if (category) {
             query += ' AND v.category_id = ?';
             params.push(parseInt(category));
+        }
+
+        if (safeTrack !== 'all') {
+            query += ' AND v.language_track = ?';
+            params.push(safeTrack);
         }
 
         if (search) {
@@ -244,6 +328,8 @@ exports.getVideos = async (req, res) => {
 // Hàm lấy 1 video (Convert từ get_video.php)
 exports.getVideoById = async (req, res) => {
     try {
+        await ensureVideoTrackColumn();
+
         const { id } = req.params;
         const query = `
             SELECT v.*, c.name AS category_name
@@ -369,10 +455,12 @@ const saveSlangEntries = async (videoId, slangEntries) => {
 // Thêm mới chức năng Upload Video Metadata (từ upload_video.php)
 exports.uploadVideo = async (req, res) => {
     try {
+        await ensureVideoTrackColumn();
+
         const { 
             title, title_cn, description, category_id, hsk_level, is_free, duration,
             video_url, thumbnail_url, subtitle_cn_url, subtitle_vi_url, subtitle_pinyin_url, slang_entries,
-            is_published,
+            is_published, language_track,
         } = req.body;
 
         const safeTitle = String(title || '').trim();
@@ -392,6 +480,7 @@ exports.uploadVideo = async (req, res) => {
         }
 
         const safeCategoryId = await resolveValidCategoryId(category_id);
+        const safeLanguageTrack = normalizeLanguageTrack(language_track, 'chinese');
 
         let safeHskLevel = Number(hsk_level || 1);
         if (Number.isNaN(safeHskLevel) || safeHskLevel < 1 || safeHskLevel > 6) {
@@ -408,12 +497,12 @@ exports.uploadVideo = async (req, res) => {
 
         const query = `
             INSERT INTO videos 
-            (title, title_cn, description, category_id, hsk_level, is_free, duration, 
+            (title, title_cn, description, category_id, hsk_level, language_track, is_free, duration, 
              video_url, thumbnail_url, subtitle_cn_url, subtitle_vi_url, subtitle_pinyin_url, is_published) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         const params = [
-            safeTitle, safeTitleCn, safeDescription, safeCategoryId, safeHskLevel, is_free ? 1 : 0, safeDuration,
+            safeTitle, safeTitleCn, safeDescription, safeCategoryId, safeHskLevel, safeLanguageTrack, is_free ? 1 : 0, safeDuration,
             safeVideoUrl, safeThumbnailUrl, safeSubtitleCnUrl, safeSubtitleViUrl, safeSubtitlePinyinUrl,
             is_published === undefined ? 1 : (is_published ? 1 : 0),
         ];
@@ -431,11 +520,14 @@ exports.uploadVideo = async (req, res) => {
 // Thêm mới chức năng Update Video Metadata (từ update_video.php)
 exports.updateVideo = async (req, res) => {
     try {
+        await ensureVideoTrackColumn();
+
         const { id } = req.params;
         const { 
             title, title_cn, description, category_id, hsk_level, is_free,
             duration, is_published,
-            video_url, thumbnail_url, subtitle_cn_url, subtitle_vi_url, subtitle_pinyin_url, slang_entries 
+            video_url, thumbnail_url, subtitle_cn_url, subtitle_vi_url, subtitle_pinyin_url, slang_entries,
+            language_track,
         } = req.body;
 
         const videoId = Number(id);
@@ -459,6 +551,9 @@ exports.updateVideo = async (req, res) => {
         }
 
         const safeCategoryId = await resolveValidCategoryId(category_id);
+        const safeLanguageTrack = language_track === undefined
+            ? null
+            : normalizeLanguageTrack(language_track, 'chinese');
 
         let safeHskLevel = Number(hsk_level || 1);
         if (Number.isNaN(safeHskLevel) || safeHskLevel < 1 || safeHskLevel > 6) {
@@ -483,7 +578,7 @@ exports.updateVideo = async (req, res) => {
             UPDATE videos SET 
                 title = COALESCE(?, title), title_cn = COALESCE(?, title_cn), 
                 description = COALESCE(?, description), category_id = COALESCE(?, category_id), 
-                hsk_level = COALESCE(?, hsk_level), is_free = COALESCE(?, is_free),
+                hsk_level = COALESCE(?, hsk_level), language_track = COALESCE(?, language_track), is_free = COALESCE(?, is_free),
                 duration = COALESCE(?, duration), is_published = COALESCE(?, is_published),
                 video_url = COALESCE(?, video_url), thumbnail_url = COALESCE(?, thumbnail_url),
                 subtitle_cn_url = COALESCE(?, subtitle_cn_url), subtitle_vi_url = COALESCE(?, subtitle_vi_url),
@@ -491,7 +586,8 @@ exports.updateVideo = async (req, res) => {
             WHERE id = ?
         `;
         const params = [
-            safeTitle, safeTitleCn, safeDescription, safeCategoryId, safeHskLevel, is_free !== undefined ? (is_free ? 1 : 0) : null,
+            safeTitle, safeTitleCn, safeDescription, safeCategoryId, safeHskLevel, safeLanguageTrack,
+            is_free !== undefined ? (is_free ? 1 : 0) : null,
             safeDuration,
             is_published === undefined ? null : (is_published ? 1 : 0),
             safeVideoUrl, safeThumbnailUrl, safeSubtitleCnUrl, safeSubtitleViUrl, safeSubtitlePinyinUrl, videoId

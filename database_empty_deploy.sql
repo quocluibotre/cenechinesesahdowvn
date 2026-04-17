@@ -103,6 +103,7 @@ CREATE TABLE `videos` (
   `description` varchar(1000) DEFAULT NULL,
   `category_id` int(11) DEFAULT NULL,
   `hsk_level` tinyint(4) NOT NULL DEFAULT 1,
+  `language_track` enum('chinese','english') NOT NULL DEFAULT 'chinese',
   `video_url` varchar(500) NOT NULL,
   `thumbnail_url` varchar(500) DEFAULT NULL,
   `subtitle_cn_url` varchar(500) DEFAULT NULL,
@@ -196,6 +197,7 @@ ALTER TABLE `videos`
   ADD PRIMARY KEY (`id`),
   ADD KEY `created_by` (`created_by`),
   ADD KEY `idx_hsk` (`hsk_level`),
+  ADD KEY `idx_language_track` (`language_track`),
   ADD KEY `idx_category` (`category_id`),
   ADD KEY `idx_published` (`is_published`);
 

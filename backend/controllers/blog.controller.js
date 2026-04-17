@@ -23,6 +23,8 @@ const GEMINI_MODEL_CANDIDATES = Array.from(new Set([
 const GEMINI_CHUNK_SIZE = Number(process.env.GEMINI_CHUNK_SIZE || 10);
 const GEMINI_REQUEST_DELAY_MS = Number(process.env.GEMINI_REQUEST_DELAY_MS || 4200);
 const GEMINI_MAX_RETRIES = Number(process.env.GEMINI_MAX_RETRIES || 2);
+const VOCAB_GENERATION_ENGINE = String(process.env.VOCAB_GENERATION_ENGINE || 'fast').trim().toLowerCase();
+const VOCAB_GEMINI_MAX_SUBTITLE_PAIRS = Number(process.env.VOCAB_GEMINI_MAX_SUBTITLE_PAIRS || 120);
 const TTS_CACHE_TTL_MS = Math.max(60_000, Number(process.env.TTS_CACHE_TTL_MS || 86_400_000));
 const TTS_CACHE_MAX_ITEMS = Math.max(50, Number(process.env.TTS_CACHE_MAX_ITEMS || 500));
 const SUBTITLE_STOPWORDS = new Set([
@@ -30,6 +32,13 @@ const SUBTITLE_STOPWORDS = new Set([
     '什么', '怎么', '这样', '那样', '因为', '所以', '如果', '但是', '然后',
     '就是', '不是', '没有', '不会', '不能', '已经', '还是', '只是', '可以',
     '应该', '一下', '一下子', '一个', '一种', '时候', '事情', '的话', '而已',
+]);
+const ENGLISH_STOPWORDS = new Set([
+    'the', 'a', 'an', 'and', 'or', 'but', 'if', 'then', 'than', 'to', 'for', 'of', 'in', 'on', 'at', 'by',
+    'with', 'from', 'as', 'is', 'am', 'are', 'was', 'were', 'be', 'been', 'being', 'do', 'does', 'did',
+    'have', 'has', 'had', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'them', 'my',
+    'your', 'our', 'their', 'this', 'that', 'these', 'those', 'there', 'here', 'who', 'what', 'when',
+    'where', 'why', 'how', 'not', 'no', 'yes', 'just', 'very', 'really', 'okay', 'ok', 'oh', 'uh', 'um',
 ]);
 const TTS_PROVIDER_FACTORIES = [
     (word) => ({
@@ -102,6 +111,183 @@ const ensureVideoSlangTable = async () => {
 };
 
 const hasChinese = (text) => /[\u3400-\u9fff]/.test(String(text || ''));
+
+const hasEnglish = (text) => /[a-zA-Z]/.test(String(text || ''));
+
+const normalizeTrackValue = (value, fallback = 'chinese') => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return fallback;
+    if (['english', 'en', 'eng'].includes(normalized)) return 'english';
+    if (['chinese', 'cn', 'zh', 'mandarin'].includes(normalized)) return 'chinese';
+    return fallback;
+};
+
+const extractYouTubeId = (url) => {
+    if (!url) return null;
+    const match = String(url).match(/(?:youtu\.be\/|v=|embed\/)([^#&?]{11})/);
+    return match ? match[1] : null;
+};
+
+const sanitizeEnglishWord = (value) => String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9'\-\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const normalizeVocabularyEngine = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (['gemini', 'llm'].includes(normalized)) return 'gemini';
+    if (['fast', 'local', 'rule', 'rules'].includes(normalized)) return 'fast';
+    return 'auto';
+};
+
+const isGeminiQuotaError = (error) => {
+    const message = String(error?.message || '').toLowerCase();
+    return message.includes('429')
+        || message.includes('quota exceeded')
+        || message.includes('too many requests')
+        || message.includes('rate limit');
+};
+
+const capSubtitlePairsForGemini = (subtitlePairs = []) => {
+    const maxPairs = Number.isFinite(VOCAB_GEMINI_MAX_SUBTITLE_PAIRS)
+        ? Math.max(20, Math.min(400, Math.floor(VOCAB_GEMINI_MAX_SUBTITLE_PAIRS)))
+        : 120;
+
+    if (!Array.isArray(subtitlePairs) || subtitlePairs.length <= maxPairs) {
+        return Array.isArray(subtitlePairs) ? subtitlePairs : [];
+    }
+
+    const capped = [];
+    const step = subtitlePairs.length / maxPairs;
+    for (let i = 0; i < maxPairs; i += 1) {
+        const index = Math.min(subtitlePairs.length - 1, Math.floor(i * step));
+        capped.push(subtitlePairs[index]);
+    }
+    return capped;
+};
+
+const tokenizeEnglishSentence = (text) => {
+    const sanitized = sanitizeEnglishWord(text);
+    if (!sanitized) return [];
+    return sanitized.split(/\s+/).filter(Boolean);
+};
+
+const shouldKeepEnglishToken = (token) => {
+    if (!token) return false;
+    if (token.length < 3 || token.length > 24) return false;
+    if (!/^[a-z][a-z'\-]*$/.test(token)) return false;
+    return !ENGLISH_STOPWORDS.has(token);
+};
+
+const scoreEnglishCandidate = (candidate) => {
+    const lengthScore = Math.min(candidate.word.length, 12) * 0.08;
+    const cueScore = candidate.cueHits * 1.9;
+    const hitScore = Math.min(candidate.totalHits, 7) * 1.1;
+    const phraseBonus = candidate.word.includes(' ') ? 0.9 : 0;
+    return lengthScore + cueScore + hitScore + phraseBonus;
+};
+
+const buildEnglishVocabularyEntries = (subtitlePairs, limit = 35) => {
+    const maxItems = Number.isFinite(limit)
+        ? Math.max(10, Math.min(80, Math.floor(limit)))
+        : 35;
+
+    const stats = new Map();
+
+    for (const pair of Array.isArray(subtitlePairs) ? subtitlePairs : []) {
+        const tokens = tokenizeEnglishSentence(pair?.cn || '').filter(shouldKeepEnglishToken);
+        if (!tokens.length) continue;
+
+        const seenWords = new Set();
+        for (const token of tokens) {
+            if (!stats.has(token)) {
+                stats.set(token, {
+                    word: token,
+                    totalHits: 0,
+                    cueHits: 0,
+                    firstTime: Number(pair?.start || 0),
+                    example: String(pair?.cn || ''),
+                    meaning_vi: String(pair?.vi || ''),
+                });
+            }
+
+            const entry = stats.get(token);
+            entry.totalHits += 1;
+            if (!seenWords.has(token)) {
+                seenWords.add(token);
+                entry.cueHits += 1;
+            }
+            if (!entry.meaning_vi && pair?.vi) {
+                entry.meaning_vi = String(pair.vi);
+            }
+        }
+
+        const seenPhrases = new Set();
+        for (let i = 0; i < tokens.length - 1; i += 1) {
+            const a = tokens[i];
+            const b = tokens[i + 1];
+            if (!shouldKeepEnglishToken(a) || !shouldKeepEnglishToken(b)) {
+                continue;
+            }
+
+            const phrase = `${a} ${b}`;
+            if (seenPhrases.has(phrase) || phrase.length > 34) {
+                continue;
+            }
+            seenPhrases.add(phrase);
+
+            if (!stats.has(phrase)) {
+                stats.set(phrase, {
+                    word: phrase,
+                    totalHits: 0,
+                    cueHits: 0,
+                    firstTime: Number(pair?.start || 0),
+                    example: String(pair?.cn || ''),
+                    meaning_vi: String(pair?.vi || ''),
+                });
+            }
+
+            const phraseEntry = stats.get(phrase);
+            phraseEntry.totalHits += 1;
+            phraseEntry.cueHits += 1;
+            if (!phraseEntry.meaning_vi && pair?.vi) {
+                phraseEntry.meaning_vi = String(pair.vi);
+            }
+        }
+    }
+
+    return Array.from(stats.values())
+        .map((item) => ({ ...item, score: scoreEnglishCandidate(item) }))
+        .filter((item) => item.cueHits >= 2 || item.totalHits >= 3)
+        .sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            if (b.cueHits !== a.cueHits) return b.cueHits - a.cueHits;
+            if (b.totalHits !== a.totalHits) return b.totalHits - a.totalHits;
+            return a.firstTime - b.firstTime;
+        })
+        .slice(0, maxItems)
+        .map((item, index) => ({
+            word: item.word,
+            pinyin: '',
+            meaning_vi: normalizeMeaningText(item.meaning_vi || ''),
+            meaning_source: item.meaning_vi ? 'subtitle_vi' : 'none',
+            word_type: item.word.includes(' ') ? 'phrase' : 'other',
+            timestamp_start: Number((item.firstTime || 0).toFixed(3)),
+            example_sentence: String(item.example || '').slice(0, 500),
+            sort_order: index + 1,
+        }));
+};
+
+const buildVocabularyFastFromSubtitlePairs = (subtitlePairs, limit, isEnglishTrack) => {
+    if (isEnglishTrack) {
+        return buildEnglishVocabularyEntries(subtitlePairs, limit);
+    }
+
+    const cues = subtitlePairs.map((item) => ({ start: item.start, text: item.cn }));
+    const meaningCues = subtitlePairs.map((item) => ({ start: item.start, text: item.vi || '' }));
+    return buildVocabularyEntries(cues, limit, meaningCues);
+};
 
 const normalizeSubtitleLine = (line) => String(line || '')
     .replace(/<[^>]*>/g, ' ')
@@ -657,26 +843,76 @@ const parseGeminiJsonArray = (rawText) => {
     throw new Error('Gemini tra ve JSON khong hop le');
 };
 
-const buildSubtitlePairs = (cues, meaningCues) => cues
-    .map((cue, index) => {
-        const cn = normalizeSubtitleLine(cue?.text || '');
-        if (!cn || !hasChinese(cn)) {
-            return null;
-        }
+const buildSubtitlePairs = (cues, meaningCues, options = {}) => {
+    const isEnglish = Boolean(options.isEnglish);
 
-        return {
-            cueIndex: index,
-            start: Number(cue?.start || 0),
-            cn,
-            vi: resolveCueMeaning(cue, index, meaningCues),
-        };
-    })
-    .filter(Boolean);
+    return (Array.isArray(cues) ? cues : [])
+        .map((cue, index) => {
+            const sourceText = normalizeSubtitleLine(cue?.text || '');
+            if (!sourceText) {
+                return null;
+            }
+
+            if (!isEnglish && !hasChinese(sourceText)) {
+                return null;
+            }
+
+            if (isEnglish && !hasEnglish(sourceText)) {
+                return null;
+            }
+
+            return {
+                cueIndex: index,
+                start: Number(cue?.start || 0),
+                cn: sourceText,
+                vi: resolveCueMeaning(cue, index, meaningCues),
+                isEnglish,
+            };
+        })
+        .filter(Boolean);
+};
+
+const buildSubtitlePairsFromDbSubtitles = (rows, options = {}) => {
+    const isEnglish = Boolean(options.isEnglish);
+
+    return (Array.isArray(rows) ? rows : [])
+        .map((row, index) => {
+            const sourceText = normalizeSubtitleLine(
+                row?.en_text || row?.cn_text || row?.subtitle_text || row?.text || ''
+            );
+            if (!sourceText) {
+                return null;
+            }
+
+            if (!isEnglish && !hasChinese(sourceText)) {
+                return null;
+            }
+
+            if (isEnglish && !hasEnglish(sourceText)) {
+                return null;
+            }
+
+            return {
+                cueIndex: index,
+                start: Number(row?.start_time || row?.start || 0),
+                cn: sourceText,
+                vi: normalizeMeaningText(row?.vn_text || row?.vi_text || ''),
+                isEnglish,
+            };
+        })
+        .filter(Boolean);
+};
 
 const findSubtitleContextForWord = (word, subtitlePairs) => {
     if (!word || !Array.isArray(subtitlePairs) || !subtitlePairs.length) {
         return null;
     }
+
+    const normalizedWord = String(word || '').trim();
+    if (!normalizedWord) {
+        return null;
+    }
+    const normalizedWordLower = normalizedWord.toLowerCase();
 
     let fallback = null;
     for (const pair of subtitlePairs) {
@@ -684,7 +920,19 @@ const findSubtitleContextForWord = (word, subtitlePairs) => {
             fallback = pair;
         }
 
-        if (pair.cn.includes(word)) {
+        const sentence = String(pair?.cn || '');
+        if (!sentence) {
+            continue;
+        }
+
+        if (pair?.isEnglish) {
+            if (sentence.toLowerCase().includes(normalizedWordLower)) {
+                return pair;
+            }
+            continue;
+        }
+
+        if (sentence.includes(normalizedWord)) {
             return pair;
         }
     }
@@ -696,31 +944,61 @@ const normalizeGeminiVocabularyItems = (items, subtitlePairs, limit) => {
     const maxItems = Number.isFinite(limit)
         ? Math.max(10, Math.min(80, Math.floor(limit)))
         : 35;
+    const isEnglishTrack = Boolean(subtitlePairs?.[0]?.isEnglish);
     const uniqueByWord = new Map();
 
     for (const item of Array.isArray(items) ? items : []) {
-        const word = sanitizeChineseWord(item?.word || item?.term || item?.word_cn);
-        if (!word || !hasChinese(word) || word.length < 2 || word.length > 10) {
+        const rawWord = item?.word || item?.term || item?.word_cn;
+        const word = isEnglishTrack
+            ? sanitizeEnglishWord(rawWord)
+            : sanitizeChineseWord(rawWord);
+
+        if (!word) {
             continue;
         }
 
-        if (!/^[\u3400-\u9fff]+$/.test(word)) {
-            continue;
+        let dedupeKey = word;
+
+        if (isEnglishTrack) {
+            if (!hasEnglish(word) || word.length < 2 || word.length > 40) {
+                continue;
+            }
+
+            const tokenCount = word.split(/\s+/).filter(Boolean).length;
+            if (tokenCount > 4) {
+                continue;
+            }
+
+            if (tokenCount <= 1 && ENGLISH_STOPWORDS.has(word)) {
+                continue;
+            }
+
+            dedupeKey = word.toLowerCase();
+        } else {
+            if (!hasChinese(word) || word.length < 2 || word.length > 10) {
+                continue;
+            }
+
+            if (!/^[\u3400-\u9fff]+$/.test(word)) {
+                continue;
+            }
         }
 
-        if (uniqueByWord.has(word)) {
+        if (uniqueByWord.has(dedupeKey)) {
             continue;
         }
 
         const context = findSubtitleContextForWord(word, subtitlePairs);
         const meaning = normalizeMeaningText(item?.meaning || item?.meaning_vi || context?.vi || '');
 
-        uniqueByWord.set(word, {
+        uniqueByWord.set(dedupeKey, {
             word,
             pinyin: normalizeSubtitleLine(item?.pinyin || '').slice(0, 120),
             meaning_vi: meaning,
             meaning_source: 'gemini',
-            word_type: inferWordType(word),
+            word_type: isEnglishTrack
+                ? (word.includes(' ') ? 'phrase' : 'other')
+                : inferWordType(word),
             timestamp_start: Number((context?.start || 0).toFixed(3)),
             example_sentence: String(context?.cn || '').slice(0, 500),
         });
@@ -760,21 +1038,34 @@ const extractVocabularyFromLLM = async (genAI, modelName, subtitlePairsChunk) =>
         },
     });
 
+    const isEnglishTrack = Boolean(subtitlePairsChunk?.[0]?.isEnglish);
     const compactPairs = subtitlePairsChunk.map((item) => ({
-        cn: item.cn,
+        line: item.cn,
         vi: item.vi || '',
     }));
 
-    const prompt = [
-        'Ban la tro ly ngon ngu hoc tieng Trung cho nguoi Viet.',
-        'Duoi day la mang cac cap cau phu de Trung-Viet.',
-        'Hay trich xuat tu 3 den 8 tu/cum tu quan trong trong moi nhom, uu tien tu co gia tri giao tiep.',
-        'Moi lan goi, chi tra ve toi da 16 object de tranh tran token.',
-        'Nghia tieng Viet phai bam sat ngu canh cua cau Viet da cho, ngan gon, tu nhien.',
-        'Bat buoc tra ve JSON THUAN la mot array object voi dung 3 field: word, meaning, pinyin.',
-        'Khong giai thich them, khong markdown, khong chu thich.',
-        `Dau vao: ${JSON.stringify(compactPairs)}`,
-    ].join('\n');
+    const prompt = isEnglishTrack
+        ? [
+            'Ban la tro ly hoc tieng Anh cho nguoi Viet.',
+            'Duoi day la cac cap cau phu de Anh - Viet.',
+            'Hay trich xuat tu 3 den 8 tu/cum tu quan trong (word, collocation, phrasal verb, idiom).',
+            'Moi lan goi chi tra ve toi da 16 object de tranh tran token.',
+            'Nghia tieng Viet phai ngan gon, dung ngu canh.',
+            'Bat buoc tra ve JSON THUAN la mot array object voi dung 3 field: word, meaning, pinyin.',
+            'Field pinyin de rong neu khong co phien am.',
+            'Khong markdown, khong giai thich them.',
+            `Dau vao: ${JSON.stringify(compactPairs)}`,
+        ].join('\n')
+        : [
+            'Ban la tro ly ngon ngu hoc tieng Trung cho nguoi Viet.',
+            'Duoi day la mang cac cap cau phu de Trung-Viet.',
+            'Hay trich xuat tu 3 den 8 tu/cum tu quan trong trong moi nhom, uu tien tu co gia tri giao tiep.',
+            'Moi lan goi, chi tra ve toi da 16 object de tranh tran token.',
+            'Nghia tieng Viet phai bam sat ngu canh cua cau Viet da cho, ngan gon, tu nhien.',
+            'Bat buoc tra ve JSON THUAN la mot array object voi dung 3 field: word, meaning, pinyin.',
+            'Khong giai thich them, khong markdown, khong chu thich.',
+            `Dau vao: ${JSON.stringify(compactPairs)}`,
+        ].join('\n');
 
     const result = await model.generateContent(prompt);
     const responseText = result?.response?.text?.() || '';
@@ -816,6 +1107,9 @@ const generateVocabularyWithGemini = async (subtitlePairs, limit) => {
                 break;
             } catch (error) {
                 lastError = error;
+                if (isGeminiQuotaError(error)) {
+                    throw error;
+                }
                 if (attempt < maxRetries) {
                     await sleep(1200 * (attempt + 1));
                 }
@@ -826,6 +1120,9 @@ const generateVocabularyWithGemini = async (subtitlePairs, limit) => {
             chunkFailureCount += 1;
             lastFailureMessage = lastError?.message || String(lastError);
             console.warn(`Gemini model ${resolvedModelName} chunk ${i}-${i + chunk.length - 1} that bai:`, lastFailureMessage);
+            if (isGeminiQuotaError(lastError)) {
+                throw lastError;
+            }
         }
 
         const hasNextChunk = i + chunkSize < subtitlePairs.length;
@@ -1102,7 +1399,7 @@ exports.generateVocabulary = async (req, res) => {
             : 35;
 
         const [videos] = await db.promise().query(
-            'SELECT id, subtitle_cn_url, subtitle_vi_url, hsk_level FROM videos WHERE id = ? LIMIT 1',
+            'SELECT id, subtitle_cn_url, subtitle_vi_url, hsk_level, language_track, video_url FROM videos WHERE id = ? LIMIT 1',
             [resolvedVideoId]
         );
 
@@ -1111,43 +1408,93 @@ exports.generateVocabulary = async (req, res) => {
         }
 
         const video = videos[0];
-        if (!video.subtitle_cn_url) {
-            return res.status(400).json({ success: false, error: 'Video chua co phu de tieng Trung' });
-        }
+        const languageTrack = normalizeTrackValue(video.language_track, 'chinese');
+        const isEnglishTrack = languageTrack === 'english';
+        const isYouTubeVideo = Boolean(extractYouTubeId(video.video_url));
 
-        if (!String(process.env.GEMINI_API_KEY || '').trim()) {
-            return res.status(500).json({ success: false, error: 'Thieu GEMINI_API_KEY tren server' });
-        }
+        let subtitlePairs = [];
 
-        const subtitleCnContent = await loadSubtitleContent(video.subtitle_cn_url);
-
-        let subtitleViContent = '';
-        if (video.subtitle_vi_url) {
+        if (isYouTubeVideo || !video.subtitle_cn_url) {
             try {
-                subtitleViContent = await loadSubtitleContent(video.subtitle_vi_url);
+                const [dbSubtitles] = await db.promise().query(
+                    'SELECT start_time, end_time, en_text, vn_text FROM subtitles WHERE video_id = ? ORDER BY start_time ASC',
+                    [resolvedVideoId]
+                );
+
+                subtitlePairs = buildSubtitlePairsFromDbSubtitles(dbSubtitles, {
+                    isEnglish: isEnglishTrack,
+                });
             } catch (error) {
-                console.warn('Warning load subtitle_vi for meaning fallback:', error.message || error);
+                console.warn('Warning load subtitles table failed:', error.message || error);
             }
         }
 
-        const cues = parseSubtitleCues(subtitleCnContent, { requireChinese: true });
-        if (!cues.length) {
-            return res.status(200).json({ success: false, error: 'Khong doc duoc phu de tieng Trung' });
-        }
+        if (!subtitlePairs.length && video.subtitle_cn_url) {
+            const subtitleMainContent = await loadSubtitleContent(video.subtitle_cn_url);
 
-        const meaningCues = subtitleViContent
-            ? parseSubtitleCues(subtitleViContent, { requireChinese: false })
-            : [];
-        const subtitlePairs = buildSubtitlePairs(cues, meaningCues);
+            let subtitleViContent = '';
+            if (video.subtitle_vi_url) {
+                try {
+                    subtitleViContent = await loadSubtitleContent(video.subtitle_vi_url);
+                } catch (error) {
+                    console.warn('Warning load subtitle_vi for meaning fallback:', error.message || error);
+                }
+            }
+
+            const cues = parseSubtitleCues(subtitleMainContent, { requireChinese: !isEnglishTrack });
+            const meaningCues = subtitleViContent
+                ? parseSubtitleCues(subtitleViContent, { requireChinese: false })
+                : [];
+
+            subtitlePairs = buildSubtitlePairs(cues, meaningCues, {
+                isEnglish: isEnglishTrack,
+            });
+        }
 
         if (!subtitlePairs.length) {
-            return res.status(200).json({ success: false, error: 'Khong du du lieu phu de de tao tu vung' });
+            if (isYouTubeVideo) {
+                return res.status(200).json({
+                    success: false,
+                    error: 'Video link YouTube chua co phu de trong bang subtitles. Hay chay buoc tai/dich phu de truoc.',
+                });
+            }
+
+            return res.status(200).json({
+                success: false,
+                error: 'Khong du du lieu phu de de tao tu vung',
+            });
         }
 
-        const entries = await generateVocabularyWithGemini(subtitlePairs, limit);
+        const vocabEngine = normalizeVocabularyEngine(VOCAB_GENERATION_ENGINE);
+        let entries = [];
+
+        if (vocabEngine === 'fast') {
+            entries = buildVocabularyFastFromSubtitlePairs(subtitlePairs, limit, isEnglishTrack);
+        } else if (vocabEngine === 'gemini') {
+            if (!String(process.env.GEMINI_API_KEY || '').trim()) {
+                return res.status(500).json({ success: false, error: 'Thieu GEMINI_API_KEY tren server' });
+            }
+            entries = await generateVocabularyWithGemini(capSubtitlePairsForGemini(subtitlePairs), limit);
+        } else {
+            const hasGeminiKey = Boolean(String(process.env.GEMINI_API_KEY || '').trim());
+            if (!hasGeminiKey) {
+                entries = buildVocabularyFastFromSubtitlePairs(subtitlePairs, limit, isEnglishTrack);
+            } else {
+                try {
+                    entries = await generateVocabularyWithGemini(capSubtitlePairsForGemini(subtitlePairs), limit);
+                } catch (geminiError) {
+                    if (!isGeminiQuotaError(geminiError)) {
+                        throw geminiError;
+                    }
+
+                    console.warn('Gemini quota exceeded, fallback to fast vocabulary generation.');
+                    entries = buildVocabularyFastFromSubtitlePairs(subtitlePairs, limit, isEnglishTrack);
+                }
+            }
+        }
 
         if (!entries.length) {
-            return res.status(200).json({ success: false, error: 'Gemini khong tra ve tu vung hop le' });
+            return res.status(200).json({ success: false, error: 'Khong tao duoc tu vung hop le tu phu de hien tai' });
         }
 
         const safeVideoId = resolvedVideoId;
@@ -1183,7 +1530,7 @@ exports.generateVocabulary = async (req, res) => {
 
         res.status(200).json({
             success: true,
-            message: `Da tao ${entries.length} the tu vung bang Gemini`,
+            message: `Da tao ${entries.length} the tu vung`,
             count: entries.length,
             data: entries,
         });

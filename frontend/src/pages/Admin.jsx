@@ -9,6 +9,7 @@ const EMPTY_UPLOAD_FORM = {
   description: '',
   category_id: '',
   hsk_level: '1',
+  language_track: 'chinese',
   is_free: true,
   is_published: true,
   duration: '0',
@@ -60,6 +61,14 @@ const getDefaultCategoryId = (list = []) => {
     return '';
   }
   return String(list[0].id);
+};
+
+const normalizeTrackValue = (value, fallback = 'chinese') => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (['english', 'en', 'eng'].includes(normalized)) return 'english';
+  if (['chinese', 'cn', 'zh', 'mandarin'].includes(normalized)) return 'chinese';
+  return fallback;
 };
 
 const normalizeSlangEntries = (entries) => {
@@ -253,6 +262,7 @@ const toPayload = (form, slangEntries = []) => {
     ...form,
     category_id: Number.isFinite(parsedCategoryId) && parsedCategoryId > 0 ? parsedCategoryId : null,
     hsk_level: Number(form.hsk_level),
+    language_track: normalizeTrackValue(form.language_track, 'chinese'),
     duration: Number(form.duration || 0),
     is_free: Boolean(form.is_free),
     is_published: Boolean(form.is_published),
@@ -288,12 +298,23 @@ const Admin = () => {
   const [editSlangEntries, setEditSlangEntries] = useState([createEmptySlangEntry()]);
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // States cho tính năng tải Youtube
+  const [ytUrl, setYtUrl] = useState('');
+  const [ytStatus, setYtStatus] = useState('');
+  const [isYtProcessing, setIsYtProcessing] = useState(false);
+
+  // States cho tính năng dịch lại phụ đề
+  const [ytRetranslateId, setYtRetranslateId] = useState('');
+  const [retranslateStatus, setRetranslateStatus] = useState('');
+  const [isRetranslating, setIsRetranslating] = useState(false);
+
   const userCountText = useMemo(() => `${users.length} người dùng`, [users.length]);
   const adminTabs = [
     { key: 'dashboard', label: 'Tổng quan', icon: 'dashboard' },
     { key: 'videos', label: 'Video', icon: 'movie' },
     { key: 'users', label: 'Người dùng', icon: 'groups' },
-    { key: 'upload', label: 'Đăng nội dung', icon: 'cloud_upload' },
+    { key: 'upload', label: 'Đăng R2', icon: 'cloud_upload' },
+    { key: 'youtube', label: 'Thêm Youtube (AI)', icon: 'smart_display' },
   ];
 
   const fetchCategories = async () => {
@@ -649,6 +670,72 @@ const Admin = () => {
     }
   };
 
+  const retranslateSubtitles = async () => {
+    if (!ytRetranslateId) {
+      setRetranslateStatus('⚠️ Vui lòng chọn video cần dịch lại');
+      return;
+    }
+    setIsRetranslating(true);
+    setRetranslateStatus('Đang dịch lại các câu chưa dịch...');
+    try {
+      const res = await fetch(`${API_BASE}/youtube/subtitles/retranslate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ video_id: Number(ytRetranslateId) }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message);
+      setRetranslateStatus(`✅ ${data.message} (${data.updated}/${data.total} câu)`);
+    } catch (err) {
+      setRetranslateStatus(`❌ Lỗi: ${err.message}`);
+    } finally {
+      setIsRetranslating(false);
+    }
+  };
+
+  const processYoutube = async (langTrack) => {
+    if(!ytUrl) {
+      setYtStatus("Vui lòng nhập Link Youtube trước");
+      return;
+    }
+    setIsYtProcessing(true);
+    setYtStatus(`Đang lấy thông tin Youtube (${langTrack})...`);
+    try {
+      const res = await fetch(`${API_BASE}/youtube/process`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ url: ytUrl, language_track: langTrack })
+      });
+      const data = await res.json();
+      if(!data.success) throw new Error(data.message);
+      
+      const db_id = data.data.id;
+      const yt_id = data.data.youtube_id;
+
+      // Cập nhật lại logic language track ngay sau khi nó được default 'english' trong code controller cũ (có thể update controller sau, hoặc admin sẽ tự edit lại track)
+      // Tạm thời gọi API dịch sub
+      setYtStatus(`Đang dùng AI bóc tách sub & dịch (Xin đợi vài phút)...`);
+      
+      const subRes = await fetch(`${API_BASE}/youtube/subtitles/translate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ db_video_id: db_id, youtube_id: yt_id })
+      });
+      const subData = await subRes.json();
+      
+      if(!subData.success) {
+         setYtStatus(`⚠️ Video đã được lưu (ID: ${db_id}) nhưng không thể tải phụ đề: ${subData.message}`);
+      } else {
+         setYtStatus(`✅ Thành công! Đã tải Video và AI dịch xong ${subData.count} câu phụ đề.`);
+      }
+      fetchVideos();
+    } catch(err) {
+      setYtStatus(`Lỗi: ${err.message}`);
+    } finally {
+      setIsYtProcessing(false);
+    }
+  };
+
   const startEditVideo = async (video) => {
     setEditVideoId(video.id);
     setEditForm({
@@ -657,6 +744,7 @@ const Admin = () => {
       description: video.description || '',
       category_id: String(video.category_id || getDefaultCategoryId(categories)),
       hsk_level: String(video.hsk_level || 1),
+      language_track: normalizeTrackValue(video.language_track, 'chinese'),
       is_free: Number(video.is_free) === 1,
       is_published: Number(video.is_published) === 1,
       duration: String(video.duration || 0),
@@ -1005,6 +1093,7 @@ const Admin = () => {
                       <p className="text-xs text-glass-subtle line-clamp-1 mt-0.5">{video.title_cn || ''}</p>
                       <div className="flex flex-wrap gap-2 mt-1 text-xs text-glass-subtle">
                         <span>HSK {video.hsk_level}</span>
+                        <span>{normalizeTrackValue(video.language_track, 'chinese') === 'english' ? 'English' : 'Chinese'}</span>
                         <span>{video.category_name || '-'}</span>
                         <span>{video.view_count || 0} lượt xem</span>
                       </div>
@@ -1036,6 +1125,7 @@ const Admin = () => {
                   <tr className="text-left">
                     <th>Tiêu đề</th>
                     <th>HSK</th>
+                    <th>Track</th>
                     <th>Category</th>
                     <th>View</th>
                     <th>Status</th>
@@ -1050,6 +1140,7 @@ const Admin = () => {
                         <div className="text-xs text-glass-subtle">{video.title_cn || ''}</div>
                       </td>
                       <td className="font-medium text-blue-900">HSK {video.hsk_level}</td>
+                      <td className="font-medium text-blue-900">{normalizeTrackValue(video.language_track, 'chinese') === 'english' ? 'English' : 'Chinese'}</td>
                       <td className="text-glass-subtle font-medium">{video.category_name || '-'}</td>
                       <td className="font-medium text-blue-900">{video.view_count || 0}</td>
                       <td>
@@ -1068,7 +1159,7 @@ const Admin = () => {
                   ))}
                   {!videos.length && (
                     <tr>
-                      <td colSpan="6">
+                      <td colSpan="7">
                         <div className="glass-empty m-2">
                           <span className="material-symbols-outlined text-3xl">video_call</span>
                           <p className="mt-1">Chưa có video nào trong hệ thống.</p>
@@ -1105,6 +1196,11 @@ const Admin = () => {
 
                   <select className="glass-input px-3 py-2 rounded-lg" value={editForm.hsk_level} onChange={(e) => setEditForm((s) => ({ ...s, hsk_level: e.target.value }))}>
                     {[1, 2, 3, 4, 5, 6].map((h) => <option key={h} value={h}>HSK {h}</option>)}
+                  </select>
+
+                  <select className="glass-input px-3 py-2 rounded-lg" value={editForm.language_track || 'chinese'} onChange={(e) => setEditForm((s) => ({ ...s, language_track: e.target.value }))}>
+                    <option value="chinese">Track: Tiếng Trung</option>
+                    <option value="english">Track: Tiếng Anh</option>
                   </select>
 
                   <input className="glass-input px-3 py-2 rounded-lg" placeholder="Duration (giây)" value={editForm.duration} onChange={(e) => setEditForm((s) => ({ ...s, duration: e.target.value }))} />
@@ -1194,6 +1290,11 @@ const Admin = () => {
                 {[1, 2, 3, 4, 5, 6].map((h) => <option key={h} value={h}>HSK {h}</option>)}
               </select>
 
+              <select className="glass-input px-3 py-2 rounded-lg" value={uploadForm.language_track || 'chinese'} onChange={(e) => setUploadForm((s) => ({ ...s, language_track: e.target.value }))}>
+                <option value="chinese">Track: Tiếng Trung</option>
+                <option value="english">Track: Tiếng Anh</option>
+              </select>
+
               <input className="glass-input px-3 py-2 rounded-lg" placeholder="Duration (giây)" value={uploadForm.duration} onChange={(e) => setUploadForm((s) => ({ ...s, duration: e.target.value }))} />
 
               <div className="flex flex-wrap gap-3 items-center text-sm text-glass-subtle">
@@ -1233,6 +1334,100 @@ const Admin = () => {
                 {uploading ? 'Đang upload Cloudflare...' : 'Thêm video'}
               </button>
             </form>
+          </section>
+        )}
+
+        {activeTab === 'youtube' && (
+          <section className="glass-surface rounded-2xl border border-white/70 p-6 space-y-5 shadow-inner bg-gradient-to-br from-white/10 to-transparent">
+            <div className="glass-section-head mb-0">
+              <h2 className="glass-section-title">
+                 <span className="material-symbols-outlined text-red-500">smart_display</span>
+                 Thêm Video Từ YouTube (Tích hợp AI)
+              </h2>
+            </div>
+            <p className="text-sm text-glass-subtle">Chỉ cần dán link YouTube, hệ thống sẽ tự động bóc tách video, âm thanh, kéo phụ đề và dùng trí tuệ nhân tạo (Gemini) để đồng bộ & dịch song ngữ.</p>
+            
+            <div className="flex flex-col md:flex-row gap-4">
+               <input 
+                 className="glass-input flex-1 px-4 py-3 rounded-xl border border-white/30 text-lg shadow-sm" 
+                 placeholder="Dán link YouTube (VD: https://www.youtube.com/watch?v=...)" 
+                 value={ytUrl} 
+                 onChange={(e) => setYtUrl(e.target.value)} 
+               />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-4">
+              <button 
+                disabled={isYtProcessing} 
+                onClick={() => processYoutube('chinese')} 
+                className="px-6 py-3 rounded-xl glass-btn glass-btn-primary font-bold disabled:opacity-50 text-white bg-red-600/80 hover:bg-red-600/100 border border-red-500/50 shadow-[0_0_15px_rgba(220,38,38,0.3)] transition-all"
+              >
+                {isYtProcessing ? 'Đang xử lý...' : 'Tải Lên Video Trung (Chinese)'}
+              </button>
+              
+              <button 
+                disabled={isYtProcessing} 
+                onClick={() => processYoutube('english')} 
+                className="px-6 py-3 rounded-xl glass-btn font-bold disabled:opacity-50 text-blue-900 bg-blue-400/80 hover:bg-blue-400/100 border border-blue-400/70 shadow-[0_0_15px_rgba(96,165,250,0.3)] transition-all"
+              >
+                {isYtProcessing ? 'Đang xử lý...' : 'Tải Lên Video English (Anh)'}
+              </button>
+            </div>
+            
+            {ytStatus && (
+               <div className="mt-4 p-4 rounded-xl font-semibold bg-white/20 border border-white/50 text-blue-900 shadow-sm animate-pulse">
+                 {ytStatus}
+               </div>
+            )}
+            
+            <div className="mt-2 text-xs text-amber-700 font-medium">
+               ⚠️ Lưu ý: Quá trình AI dịch sub có thể kéo dài từ 30 giây đến vài phút tùy theo độ dài video!
+            </div>
+
+            {/* --- Dịch lại phụ đề bị lỗi --- */}
+            <div className="mt-6 pt-5 border-t border-white/20 space-y-4">
+              <div className="glass-section-head mb-0">
+                <h3 className="glass-section-title text-base">
+                  <span className="material-symbols-outlined text-amber-500">translate</span>
+                  Dịch lại phụ đề "Chưa dịch"
+                </h3>
+              </div>
+              <p className="text-xs text-glass-subtle">Chọn video đã upload để dịch lại các câu phụ đề còn bị lỗi <strong>(Chưa dịch)</strong> mà không cần cào lại YouTube.</p>
+
+              <div className="flex flex-col md:flex-row gap-3 items-start md:items-center">
+                <select
+                  className="glass-input flex-1 px-4 py-3 rounded-xl border border-white/30 text-sm shadow-sm"
+                  value={ytRetranslateId}
+                  onChange={(e) => setYtRetranslateId(e.target.value)}
+                  disabled={isRetranslating}
+                >
+                  <option value="">-- Chọn video cần dịch lại --</option>
+                  {videos.map((v) => (
+                    <option key={v.id} value={v.id}>#{v.id} — {v.title}</option>
+                  ))}
+                </select>
+
+                <button
+                  disabled={isRetranslating || !ytRetranslateId}
+                  onClick={retranslateSubtitles}
+                  className="px-6 py-3 rounded-xl glass-btn font-bold disabled:opacity-50 text-amber-900 bg-amber-400/80 hover:bg-amber-500/90 border border-amber-400/70 shadow-[0_0_15px_rgba(251,191,36,0.3)] transition-all whitespace-nowrap"
+                >
+                  {isRetranslating ? '⏳ Đang dịch...' : '🔄 Dịch lại ngay'}
+                </button>
+              </div>
+
+              {retranslateStatus && (
+                <div className={`p-4 rounded-xl font-semibold border text-sm shadow-sm ${
+                  retranslateStatus.startsWith('✅')
+                    ? 'bg-green-50/40 border-green-300/50 text-green-800'
+                    : retranslateStatus.startsWith('❌')
+                    ? 'bg-red-50/40 border-red-300/50 text-red-800'
+                    : 'bg-white/20 border-white/50 text-blue-900 animate-pulse'
+                }`}>
+                  {retranslateStatus}
+                </div>
+              )}
+            </div>
           </section>
         )}
       </main>

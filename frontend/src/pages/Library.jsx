@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import UserPanelDrawer from '../components/layout/UserPanelDrawer';
 import VideoThumbnail from '../components/ui/VideoThumbnail';
 import { API_BASE } from '../utils/apiBase';
@@ -14,7 +14,22 @@ const authHeaders = () => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
+const normalizeTrackValue = (value, fallback = 'all') => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (['all'].includes(normalized)) return 'all';
+  if (['english', 'en', 'eng'].includes(normalized)) return 'english';
+  if (['chinese', 'cn', 'zh', 'mandarin'].includes(normalized)) return 'chinese';
+  return fallback;
+};
+
+const getLevelLabel = (track, level) => {
+  const safeLevel = Number(level || 1);
+  return track === 'english' ? `Level ${safeLevel}` : `HSK ${safeLevel}`;
+};
+
 const Library = () => {
+  const location = useLocation();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [videos, setVideos] = useState([]);
@@ -24,8 +39,10 @@ const Library = () => {
   const [stats, setStats] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [isUserPanelOpen, setIsUserPanelOpen] = useState(false);
+  const isLoggedIn = Boolean(currentUser);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [trackFilter, setTrackFilter] = useState(() => normalizeTrackValue(new URLSearchParams(location.search).get('track'), 'all'));
   const [hskFilter, setHskFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [sortBy, setSortBy] = useState('newest');
@@ -59,7 +76,6 @@ const Library = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setCurrentUser(null);
-    navigate('/login', { replace: true });
     return false;
   };
 
@@ -68,8 +84,56 @@ const Library = () => {
     return match?.slug || '';
   };
 
+  const getVideoTrack = (video) => normalizeTrackValue(video?.language_track, 'chinese');
+
+  const trackScopedVideos = useMemo(() => {
+    if (trackFilter === 'all') {
+      return videos;
+    }
+    return videos.filter((video) => normalizeTrackValue(video.language_track, 'chinese') === trackFilter);
+  }, [videos, trackFilter]);
+
+  const trackCounts = useMemo(() => {
+    const counts = { chinese: 0, english: 0 };
+    videos.forEach((video) => {
+      const normalized = normalizeTrackValue(video.language_track, 'chinese');
+      if (normalized === 'english') {
+        counts.english += 1;
+      } else {
+        counts.chinese += 1;
+      }
+    });
+    return counts;
+  }, [videos]);
+
+  const categoryVideoCountMap = useMemo(() => {
+    const map = {};
+    trackScopedVideos.forEach((video) => {
+      const slug = getCategorySlug(video.category_id);
+      if (!slug) {
+        return;
+      }
+      map[slug] = (map[slug] || 0) + 1;
+    });
+    return map;
+  }, [trackScopedVideos, categories]);
+
+  const changeTrackFilter = (nextTrack) => {
+    const safeTrack = normalizeTrackValue(nextTrack, 'all');
+    setTrackFilter(safeTrack);
+    const params = new URLSearchParams(location.search);
+    if (safeTrack === 'all') {
+      params.delete('track');
+    } else {
+      params.set('track', safeTrack);
+    }
+
+    const query = params.toString();
+    navigate(`/library${query ? `?${query}` : ''}`, { replace: true });
+  };
+
   const filteredVideos = useMemo(() => {
-    let data = [...videos];
+    let data = [...trackScopedVideos];
 
     if (hskFilter !== 'all') {
       data = data.filter((v) => Number(v.hsk_level) === Number(hskFilter));
@@ -98,7 +162,7 @@ const Library = () => {
     }
 
     return data;
-  }, [videos, hskFilter, categoryFilter, searchQuery, sortBy, categories]);
+  }, [trackScopedVideos, hskFilter, categoryFilter, searchQuery, sortBy, categories]);
 
   const pagedVideos = useMemo(() => {
     const start = (page - 1) * perPage;
@@ -153,7 +217,8 @@ const Library = () => {
     setIsUserPanelOpen(false);
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    navigate('/login', { replace: true });
+    setCurrentUser(null);
+    navigate('/home', { replace: true });
   };
 
   const closeUserPanel = () => setIsUserPanelOpen(false);
@@ -188,10 +253,7 @@ const Library = () => {
     const run = async () => {
       try {
         setLoading(true);
-        const isValidSession = await syncCurrentUser();
-        if (!isValidSession) {
-          return;
-        }
+        await syncCurrentUser();
         await Promise.all([
           loadCategories(),
           loadVideos(),
@@ -214,20 +276,39 @@ const Library = () => {
       if (event.key === 'token' || event.key === 'user') {
         if (!localStorage.getItem('token')) {
           setCurrentUser(null);
-          navigate('/login', { replace: true });
+          setIsUserPanelOpen(false);
+          loadContinueWatching();
+          loadSavedWords();
+          loadStats();
           return;
         }
         syncCurrentUser();
+        loadContinueWatching();
+        loadSavedWords();
+        loadStats();
       }
     };
 
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [navigate]);
+  }, []);
+
+  useEffect(() => {
+    const urlTrack = normalizeTrackValue(new URLSearchParams(location.search).get('track'), 'all');
+    setTrackFilter((prev) => (prev === urlTrack ? prev : urlTrack));
+  }, [location.search]);
 
   useEffect(() => {
     setPage(1);
-  }, [hskFilter, categoryFilter, searchQuery, sortBy]);
+  }, [trackFilter, hskFilter, categoryFilter, searchQuery, sortBy]);
+
+  const activeTrackHeading = trackFilter === 'english'
+    ? 'Tiếp tục hành trình học tiếng Anh của bạn'
+    : trackFilter === 'chinese'
+      ? 'Tiếp tục hành trình học tiếng Trung của bạn'
+      : 'Tiếp tục hành trình học ngoại ngữ của bạn';
+
+  const levelFilterLabel = trackFilter === 'english' ? 'Tất cả level' : 'Tất cả cấp độ';
 
   return (
     <div className="min-h-screen pb-10 text-glass-main relative">
@@ -240,7 +321,7 @@ const Library = () => {
             <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/25">
               <span className="material-symbols-outlined text-white">movie_edit</span>
             </div>
-            <span className="font-bold text-xl hidden sm:block text-blue-900">Cineshadow <span className="text-blue-600">Chinese</span></span>
+            <span className="font-bold text-xl hidden sm:block text-blue-900">Cineshadow <span className="text-blue-600">Languages</span></span>
           </Link>
 
           <div className="order-3 w-full sm:order-2 sm:flex-1 sm:max-w-xl">
@@ -257,25 +338,33 @@ const Library = () => {
           </div>
 
           <div className="order-2 ml-auto sm:order-3 flex items-center gap-2">
-            <button
-              onClick={handleLogout}
-              className="glass-chip p-1.5 sm:p-2 text-glass-subtle hover:text-rose-600 rounded-full transition"
-              title="Đăng xuất"
-            >
-              <span className="material-symbols-outlined text-lg">logout</span>
-            </button>
-            <button
-              onClick={toggleUserPanel}
-              className="glass-chip rounded-full p-1.5 flex items-center gap-1"
-              title="Mở trang người dùng"
-            >
-              <img
-                src={currentUser?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser?.full_name || currentUser?.username || 'User')}&background=3b82f6&color=fff`}
-                alt="avatar"
-                className="w-9 h-9 rounded-full ring-2 ring-white/70"
-              />
-              <span className="material-symbols-outlined text-glass-subtle text-base">{isUserPanelOpen ? 'close' : 'chevron_left'}</span>
-            </button>
+            {isLoggedIn ? (
+              <>
+                <button
+                  onClick={handleLogout}
+                  className="glass-chip p-1.5 sm:p-2 text-glass-subtle hover:text-rose-600 rounded-full transition"
+                  title="Đăng xuất"
+                >
+                  <span className="material-symbols-outlined text-lg">logout</span>
+                </button>
+                <button
+                  onClick={toggleUserPanel}
+                  className="glass-chip rounded-full p-1.5 flex items-center gap-1"
+                  title="Mở trang người dùng"
+                >
+                  <img
+                    src={currentUser?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser?.full_name || currentUser?.username || 'User')}&background=3b82f6&color=fff`}
+                    alt="avatar"
+                    className="w-9 h-9 rounded-full ring-2 ring-white/70"
+                  />
+                  <span className="material-symbols-outlined text-glass-subtle text-base">{isUserPanelOpen ? 'close' : 'chevron_left'}</span>
+                </button>
+              </>
+            ) : (
+              <Link to="/login" className="glass-chip px-3 py-2 rounded-lg text-sm font-semibold text-blue-700 hover:text-blue-900 transition">
+                Đăng nhập
+              </Link>
+            )}
           </div>
         </div>
       </header>
@@ -285,7 +374,7 @@ const Library = () => {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold mb-1 text-blue-950">Chào mừng trở lại!</h1>
-              <p className="text-glass-subtle">Tiếp tục hành trình học tiếng Trung của bạn</p>
+              <p className="text-glass-subtle">{activeTrackHeading}</p>
             </div>
 
             <div className="grid grid-cols-3 gap-3 w-full md:w-auto md:min-w-[420px]">
@@ -302,6 +391,50 @@ const Library = () => {
                 <div className="text-2xl sm:text-3xl font-bold text-blue-900 mt-1">{stats?.streak ?? '-'}</div>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="glass-section-title text-xl mb-4">
+            <span className="material-symbols-outlined text-blue-600">translate</span>
+            Hướng học
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 stagger-sequence">
+            <button
+              onClick={() => changeTrackFilter('all')}
+              className={`stagger-item category-card rounded-2xl p-4 text-left border transition glass-hover-lift ${trackFilter === 'all' ? 'glass-surface-strong border-blue-500/40' : 'glass-surface border-white/70 hover:border-blue-300/50'}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-blue-900">Tất cả lộ trình</span>
+                <span className="material-symbols-outlined text-blue-600">public</span>
+              </div>
+              <p className="text-xs text-glass-subtle mt-1">Học đa ngôn ngữ trên cùng một thư viện</p>
+              <div className="text-sm font-medium text-blue-800 mt-3">{videos.length} video</div>
+            </button>
+
+            <button
+              onClick={() => changeTrackFilter('chinese')}
+              className={`stagger-item category-card rounded-2xl p-4 text-left border transition glass-hover-lift ${trackFilter === 'chinese' ? 'glass-surface-strong border-blue-500/40' : 'glass-surface border-white/70 hover:border-blue-300/50'}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-blue-900">Tiếng Trung</span>
+                <span className="material-symbols-outlined text-blue-600">south_america</span>
+              </div>
+              <p className="text-xs text-glass-subtle mt-1">Shadowing phim Trung, bám sát ngữ điệu bản xứ</p>
+              <div className="text-sm font-medium text-blue-800 mt-3">{trackCounts.chinese} video</div>
+            </button>
+
+            <button
+              onClick={() => changeTrackFilter('english')}
+              className={`stagger-item category-card rounded-2xl p-4 text-left border transition glass-hover-lift ${trackFilter === 'english' ? 'glass-surface-strong border-blue-500/40' : 'glass-surface border-white/70 hover:border-blue-300/50'}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-blue-900">Tiếng Anh</span>
+                <span className="material-symbols-outlined text-blue-600">language</span>
+              </div>
+              <p className="text-xs text-glass-subtle mt-1">Luyện phản xạ giao tiếp với video hội thoại thực tế</p>
+              <div className="text-sm font-medium text-blue-800 mt-3">{trackCounts.english} video</div>
+            </button>
           </div>
         </section>
 
@@ -347,7 +480,7 @@ const Library = () => {
         <section>
           <h2 className="glass-section-title text-xl mb-4">
             <span className="material-symbols-outlined text-blue-600">category</span>
-            Danh mục
+            Danh mục theo hướng học
           </h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 stagger-sequence">
             <button
@@ -356,7 +489,7 @@ const Library = () => {
             >
               <span className="material-symbols-outlined text-3xl text-blue-600 mb-1">apps</span>
               <div className="font-medium text-blue-900">Tất cả</div>
-              <div className="text-xs text-glass-subtle mt-1">{videos.length} video</div>
+              <div className="text-xs text-glass-subtle mt-1">{trackScopedVideos.length} video</div>
             </button>
 
             {categories.map((cat) => (
@@ -367,7 +500,7 @@ const Library = () => {
               >
                 <span className="material-symbols-outlined text-3xl text-blue-600 mb-1">{cat.icon || 'folder'}</span>
                 <div className="font-medium text-blue-900">{cat.name}</div>
-                <div className="text-xs text-glass-subtle mt-1">{cat.video_count} video</div>
+                <div className="text-xs text-glass-subtle mt-1">{categoryVideoCountMap[cat.slug] || 0} video</div>
               </button>
             ))}
           </div>
@@ -391,9 +524,9 @@ const Library = () => {
           </div>
 
           <div className="flex flex-wrap gap-2 mb-6">
-            <button onClick={() => setHskFilter('all')} className={`px-4 py-2 border rounded-full text-sm font-medium transition ${hskFilter === 'all' ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>Tất cả cấp độ</button>
+            <button onClick={() => setHskFilter('all')} className={`px-4 py-2 border rounded-full text-sm font-medium transition ${hskFilter === 'all' ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>{levelFilterLabel}</button>
             {[1, 2, 3, 4, 5, 6].map((hsk) => (
-              <button key={hsk} onClick={() => setHskFilter(String(hsk))} className={`px-4 py-2 border rounded-full text-sm font-medium transition ${hskFilter === String(hsk) ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>HSK {hsk}</button>
+              <button key={hsk} onClick={() => setHskFilter(String(hsk))} className={`px-4 py-2 border rounded-full text-sm font-medium transition ${hskFilter === String(hsk) ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>{getLevelLabel(trackFilter, hsk)}</button>
             ))}
 
             <div className="ml-auto">
@@ -427,7 +560,8 @@ const Library = () => {
                         className="w-full h-full aspect-video object-cover"
                       />
                       <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-2 py-1 rounded">{formatDuration(video.duration)}</div>
-                      <div className="absolute top-2 left-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white text-xs font-bold px-2 py-1 rounded">HSK {video.hsk_level}</div>
+                      <div className="absolute top-2 left-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white text-xs font-bold px-2 py-1 rounded">{getLevelLabel(getVideoTrack(video), video.hsk_level)}</div>
+                      <div className="absolute top-2 right-2 bg-white/85 text-blue-900 text-xs font-semibold px-2 py-1 rounded">{getVideoTrack(video) === 'english' ? 'English' : 'Chinese'}</div>
                     </div>
 
                     <div className="p-4 min-w-0">
@@ -470,43 +604,51 @@ const Library = () => {
           )}
         </section>
 
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="glass-section-title text-xl">
-              <span className="material-symbols-outlined text-blue-600">bookmark</span>
-              Từ vựng đã lưu <span className="text-sm font-normal text-glass-subtle">({savedWords.length})</span>
-            </h2>
-          </div>
+        {isLoggedIn ? (
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="glass-section-title text-xl">
+                <span className="material-symbols-outlined text-blue-600">bookmark</span>
+                Từ vựng đã lưu <span className="text-sm font-normal text-glass-subtle">({savedWords.length})</span>
+              </h2>
+            </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 stagger-sequence">
-            {savedWords.slice(0, 8).map((word) => (
-              <div key={word.id} className="stagger-item glass-surface rounded-2xl p-4 border border-white/70">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="text-xl font-medium text-blue-950">{word.word_cn || ''}</div>
-                    <div className="text-blue-600 text-sm mt-0.5">{word.pinyin || ''}</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 stagger-sequence">
+              {savedWords.slice(0, 8).map((word) => (
+                <div key={word.id} className="stagger-item glass-surface rounded-2xl p-4 border border-white/70">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-xl font-medium text-blue-950">{word.word_cn || ''}</div>
+                      <div className="text-blue-600 text-sm mt-0.5">{word.pinyin || ''}</div>
+                    </div>
+                    <button onClick={() => removeWord(word.id)} className="text-glass-subtle hover:text-red-500 transition">
+                      <span className="material-symbols-outlined text-lg">close</span>
+                    </button>
                   </div>
-                  <button onClick={() => removeWord(word.id)} className="text-glass-subtle hover:text-red-500 transition">
-                    <span className="material-symbols-outlined text-lg">close</span>
-                  </button>
+                  <div className="text-glass-subtle text-sm mt-2">{word.meaning || ''}</div>
+                  {word.video_title && <div className="text-xs text-glass-subtle/80 mt-2 truncate">Video: {word.video_title}</div>}
                 </div>
-                <div className="text-glass-subtle text-sm mt-2">{word.meaning || ''}</div>
-                {word.video_title && <div className="text-xs text-glass-subtle/80 mt-2 truncate">Video: {word.video_title}</div>}
-              </div>
-            ))}
+              ))}
 
-            {!savedWords.length && (
-              <div className="col-span-full glass-empty py-8">
-                <span className="material-symbols-outlined text-4xl">bookmark_border</span>
-                <p className="mt-2">Chưa có từ vựng nào được lưu</p>
-              </div>
-            )}
-          </div>
-        </section>
+              {!savedWords.length && (
+                <div className="col-span-full glass-empty py-8">
+                  <span className="material-symbols-outlined text-4xl">bookmark_border</span>
+                  <p className="mt-2">Chưa có từ vựng nào được lưu</p>
+                </div>
+              )}
+            </div>
+          </section>
+        ) : (
+          <section className="glass-surface rounded-2xl border border-white/70 p-5 text-center">
+            <h3 className="text-lg font-semibold text-blue-900">Bạn đang xem ở chế độ mở</h3>
+            <p className="text-sm text-glass-subtle mt-1">Không cần đăng nhập để xem video. Đăng nhập để lưu từ vựng và theo dõi tiến độ học.</p>
+            <Link to="/login" className="inline-flex mt-3 glass-btn glass-btn-primary px-4 py-2 rounded-xl text-sm font-semibold">Đăng nhập để đồng bộ tiến độ</Link>
+          </section>
+        )}
       </main>
 
       <UserPanelDrawer
-        isOpen={isUserPanelOpen}
+        isOpen={isLoggedIn ? isUserPanelOpen : false}
         onClose={closeUserPanel}
         onLogout={handleLogout}
         currentUser={currentUser}

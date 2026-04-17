@@ -11,7 +11,7 @@ export default {
         "primary-dark": "#1f21b8",
       },
       fontFamily: {
-        "display": ["Plus Jakarta Sans", "sans-serif"]
+        "display": ["Be Vietnam Pro", "Noto Sans", "sans-serif"]
       }
     },
   },
