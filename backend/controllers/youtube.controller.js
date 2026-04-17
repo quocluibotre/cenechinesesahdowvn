@@ -11,11 +11,150 @@ const TRANSLATE_CONTEXT_GROUP = Math.max(1, Math.min(10, Number(process.env.YOUT
 const IDIOM_REWRITE_ENGINE = String(process.env.YOUTUBE_IDIOM_REWRITE_ENGINE || 'auto').trim().toLowerCase();
 const IDIOM_REWRITE_MAX_ITEMS = Math.max(0, Math.min(80, Number(process.env.YOUTUBE_IDIOM_REWRITE_MAX_ITEMS || 20)));
 const IDIOM_REWRITE_MODEL = String(process.env.YOUTUBE_IDIOM_REWRITE_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash').trim();
+const YOUTUBE_PROXY_URL = String(process.env.YOUTUBE_PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || '').trim();
 let idiomRewriteCooldownUntil = 0;
 const SUBTITLE_SEGMENT_MAX_WORDS = Math.max(8, Number(process.env.YOUTUBE_SUBTITLE_MAX_WORDS || 14));
 const SUBTITLE_SEGMENT_MAX_CHARS = Math.max(60, Number(process.env.YOUTUBE_SUBTITLE_MAX_CHARS || 96));
 const SUBTITLE_SEGMENT_MAX_DURATION = Math.max(2.5, Number(process.env.YOUTUBE_SUBTITLE_MAX_DURATION || 6.5));
 const SUBTITLE_SEGMENT_PAUSE_SEC = Math.max(0.2, Number(process.env.YOUTUBE_SUBTITLE_PAUSE_SEC || 1.1));
+
+function createYouTubeProxySettings(proxyUrl) {
+    const safeUrl = String(proxyUrl || '').trim();
+    if (!safeUrl) {
+        return null;
+    }
+
+    try {
+        const parsed = new URL(safeUrl);
+        const protocol = String(parsed.protocol || '').replace(':', '').toLowerCase();
+        const port = Number(parsed.port || (protocol === 'https' ? 443 : 80));
+
+        if (!parsed.hostname || !Number.isFinite(port) || port <= 0) {
+            return null;
+        }
+
+        const username = decodeURIComponent(parsed.username || '');
+        const password = decodeURIComponent(parsed.password || '');
+
+        return {
+            protocol,
+            host: parsed.hostname,
+            port,
+            auth: username
+                ? {
+                    username,
+                    password,
+                }
+                : null,
+        };
+    } catch {
+        return null;
+    }
+}
+
+const YOUTUBE_PROXY_SETTINGS = createYouTubeProxySettings(YOUTUBE_PROXY_URL);
+
+if (YOUTUBE_PROXY_URL && !YOUTUBE_PROXY_SETTINGS) {
+    console.warn('[YouTube] Ignoring invalid YOUTUBE_PROXY_URL format.');
+}
+
+if (YOUTUBE_PROXY_SETTINGS) {
+    console.log(`[YouTube] Outbound proxy enabled for YouTube requests: ${YOUTUBE_PROXY_SETTINGS.host}:${YOUTUBE_PROXY_SETTINGS.port}`);
+}
+
+function isYouTubeLikeHostname(hostname) {
+    const safeHost = String(hostname || '').toLowerCase();
+    if (!safeHost) return false;
+
+    return safeHost.endsWith('youtube.com')
+        || safeHost.endsWith('googlevideo.com')
+        || safeHost.endsWith('ytimg.com')
+        || safeHost.endsWith('video.google.com')
+        || safeHost.endsWith('googleapis.com');
+}
+
+function getAxiosProxyForUrl(url) {
+    if (!YOUTUBE_PROXY_SETTINGS) {
+        return null;
+    }
+
+    try {
+        const parsed = new URL(String(url || ''));
+        if (!isYouTubeLikeHostname(parsed.hostname)) {
+            return null;
+        }
+
+        return {
+            protocol: YOUTUBE_PROXY_SETTINGS.protocol,
+            host: YOUTUBE_PROXY_SETTINGS.host,
+            port: YOUTUBE_PROXY_SETTINGS.port,
+            auth: YOUTUBE_PROXY_SETTINGS.auth || undefined,
+        };
+    } catch {
+        return null;
+    }
+}
+
+function applyYouTubeProxy(url, axiosConfig = {}) {
+    const proxy = getAxiosProxyForUrl(url);
+    return proxy
+        ? { ...axiosConfig, proxy }
+        : axiosConfig;
+}
+
+async function youtubeGet(url, config = {}) {
+    return axios.get(url, applyYouTubeProxy(url, config));
+}
+
+async function youtubePost(url, body, config = {}) {
+    return axios.post(url, body, applyYouTubeProxy(url, config));
+}
+
+function createAxiosFetchForYouTube() {
+    return async (url, init = {}) => {
+        const response = await axios({
+            url,
+            method: String(init?.method || 'GET').toUpperCase(),
+            headers: init?.headers || {},
+            data: init?.body,
+            timeout: 30000,
+            maxRedirects: 5,
+            responseType: 'text',
+            transformResponse: [(value) => value],
+            validateStatus: () => true,
+            ...applyYouTubeProxy(url, {}),
+        });
+
+        const rawBody = typeof response.data === 'string'
+            ? response.data
+            : JSON.stringify(response.data ?? '');
+
+        return {
+            ok: response.status >= 200 && response.status < 300,
+            status: response.status,
+            text: async () => rawBody,
+            json: async () => {
+                if (typeof response.data === 'object' && response.data !== null) {
+                    return response.data;
+                }
+
+                if (!rawBody) {
+                    return {};
+                }
+
+                return JSON.parse(rawBody);
+            },
+            headers: {
+                get(name) {
+                    if (!name) return null;
+                    const key = String(name).toLowerCase();
+                    const value = response.headers?.[key];
+                    return value == null ? null : String(value);
+                },
+            },
+        };
+    };
+}
 
 // --- Tách Video ID từ URL ---
 function extractYouTubeId(url) {
@@ -115,14 +254,17 @@ async function fetchYouTubeTranscriptByLibrary(videoId) {
     }
 
     const languageCandidates = ['en', 'en-US', 'en-GB', null];
+    const proxyFetch = YOUTUBE_PROXY_SETTINGS ? createAxiosFetchForYouTube() : null;
     let lastError = null;
 
     for (const lang of languageCandidates) {
         try {
-            const options = lang ? { lang } : undefined;
-            const rows = options
-                ? await transcriptApi.fetchTranscript(videoId, options)
-                : await transcriptApi.fetchTranscript(videoId);
+            const options = {
+                ...(lang ? { lang } : {}),
+                ...(proxyFetch ? { fetch: proxyFetch } : {}),
+            };
+
+            const rows = await transcriptApi.fetchTranscript(videoId, options);
 
             if (!Array.isArray(rows) || rows.length === 0) {
                 continue;
@@ -160,7 +302,7 @@ async function fetchYouTubeTranscriptByLibrary(videoId) {
 
 async function fetchYouTubeMetadataWithApiKey(videoId, apiKey) {
     const ytApiUrl = `https://www.googleapis.com/youtube/v3/videos?id=${videoId}&part=snippet,contentDetails&key=${apiKey}`;
-    const response = await axios.get(ytApiUrl, { timeout: 20000 });
+    const response = await youtubeGet(ytApiUrl, { timeout: 20000 });
     const items = response.data?.items;
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -197,7 +339,7 @@ async function fetchYouTubeMetadataWithoutApiKey(videoId) {
     let durationSecs = 0;
 
     try {
-        const oembedResponse = await axios.get('https://www.youtube.com/oembed', {
+        const oembedResponse = await youtubeGet('https://www.youtube.com/oembed', {
             params: {
                 url: videoUrl,
                 format: 'json',
@@ -212,7 +354,7 @@ async function fetchYouTubeMetadataWithoutApiKey(videoId) {
     }
 
     try {
-        const watchResponse = await axios.get(videoUrl, {
+        const watchResponse = await youtubeGet(videoUrl, {
             timeout: 20000,
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -952,7 +1094,7 @@ exports.extractAndTranslateSubtitles = async (req, res) => {
             const CLIENT_VERSION = '20.10.38';
             const USER_AGENT = `com.google.android.youtube/${CLIENT_VERSION} (Linux; U; Android 14)`;
 
-            const innertubeRes = await axios.post(INNERTUBE_URL, {
+            const innertubeRes = await youtubePost(INNERTUBE_URL, {
                 context: {
                     client: {
                         clientName: 'ANDROID',
@@ -991,7 +1133,7 @@ exports.extractAndTranslateSubtitles = async (req, res) => {
             console.log('Selected track:', selectedTrack.languageCode, selectedTrack.name?.simpleText);
 
             // Fetch nội dung XML của transcript
-            const xmlRes = await axios.get(selectedTrack.baseUrl, {
+            const xmlRes = await youtubeGet(selectedTrack.baseUrl, {
                 headers: { 'User-Agent': USER_AGENT }
             });
 
@@ -1279,7 +1421,7 @@ exports.debugTranscript = async (req, res) => {
         const CLIENT_VERSION = '20.10.38';
         const USER_AGENT = `com.google.android.youtube/${CLIENT_VERSION} (Linux; U; Android 14)`;
 
-        const innertubeRes = await axios.post(INNERTUBE_URL, {
+        const innertubeRes = await youtubePost(INNERTUBE_URL, {
             context: { client: { clientName: 'ANDROID', clientVersion: CLIENT_VERSION } },
             videoId: youtubeId
         }, { headers: { 'Content-Type': 'application/json', 'User-Agent': USER_AGENT } });
@@ -1292,7 +1434,7 @@ exports.debugTranscript = async (req, res) => {
 
         // Lấy track đầu tiên
         const track = captionTracks.find(t => t.languageCode === 'en') || captionTracks[0];
-        const xmlRes = await axios.get(track.baseUrl, { headers: { 'User-Agent': USER_AGENT } });
+        const xmlRes = await youtubeGet(track.baseUrl, { headers: { 'User-Agent': USER_AGENT } });
 
         return res.json({
             success: true,

@@ -43,6 +43,9 @@ And keep your existing app variables:
 - `GEMINI_API_KEY`
 - `GEMINI_MODEL` (optional, default already works)
 
+Optional for YouTube subtitle extraction stability on Render:
+- `YOUTUBE_PROXY_URL=http://<user>:<pass>@<proxy-host>:<proxy-port>`
+
 CORS variable (set after you have Cloudflare URL):
 - `CORS_ORIGINS=https://<your-project>.pages.dev`
 
@@ -93,6 +96,11 @@ Then deploy.
 
 - Check `DB_CLIENT=postgres`.
 - Re-check table creation in Supabase SQL Editor.
+
+### YouTube subtitle translate says server IP/rate-limit/region blocked
+
+- Configure `YOUTUBE_PROXY_URL` in Render Environment.
+- Redeploy backend and retry the same video.
 
 ## 6) Optional custom domain (later)
 
