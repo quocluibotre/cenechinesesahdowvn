@@ -1192,6 +1192,127 @@ async function resolveVideoIdForSubtitles(rawVideoId, youtubeId) {
     return null;
 }
 
+function toFiniteNumber(value, fallback = 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseImportedWordTimings(value) {
+    if (!value) return null;
+
+    if (Array.isArray(value)) {
+        return value.length ? value : null;
+    }
+
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) && parsed.length ? parsed : null;
+        } catch {
+            return null;
+        }
+    }
+
+    return null;
+}
+
+function normalizeImportedSubtitleRow(item) {
+    const enText = String(item?.en_text || item?.text || '').replace(/\s+/g, ' ').trim();
+    if (!enText) return null;
+
+    const startRaw = toFiniteNumber(item?.start ?? item?.start_time, 0);
+    const endCandidate = item?.end ?? item?.end_time;
+    const durCandidate = item?.dur ?? item?.duration;
+    const endRaw = endCandidate != null
+        ? toFiniteNumber(endCandidate, startRaw)
+        : (startRaw + Math.max(0, toFiniteNumber(durCandidate, 2)));
+
+    const safeStart = Math.max(0, startRaw);
+    const safeEnd = Math.max(safeStart + 0.1, endRaw);
+
+    const vnText = String(item?.vn_text || '').trim();
+    const words = parseImportedWordTimings(item?.words ?? item?.word_timings);
+
+    return {
+        start: Number(safeStart.toFixed(3)),
+        end: Number(safeEnd.toFixed(3)),
+        en_text: enText,
+        vn_text: vnText,
+        word_timings: words ? JSON.stringify(words) : null,
+    };
+}
+
+exports.importSubtitles = async (req, res) => {
+    try {
+        const { video_id, db_video_id, youtube_id, subtitles, replace_existing } = req.body || {};
+
+        const numericVideoId = Number(video_id);
+        let resolvedVideoId = Number.isFinite(numericVideoId) && numericVideoId > 0
+            ? numericVideoId
+            : null;
+
+        if (!resolvedVideoId) {
+            resolvedVideoId = await resolveVideoIdForSubtitles(db_video_id, youtube_id);
+        }
+
+        if (!resolvedVideoId) {
+            return res.status(404).json({
+                success: false,
+                message: 'Khong tim thay video trong DB. Can video_id hoac cap (db_video_id + youtube_id) hop le.',
+            });
+        }
+
+        if (!Array.isArray(subtitles) || subtitles.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'subtitles phai la mang va khong duoc rong',
+            });
+        }
+
+        const normalizedRows = subtitles
+            .map(normalizeImportedSubtitleRow)
+            .filter(Boolean);
+
+        if (!normalizedRows.length) {
+            return res.status(400).json({
+                success: false,
+                message: 'Khong co dong subtitle hop le de import',
+            });
+        }
+
+        const shouldReplace = replace_existing !== false;
+        if (shouldReplace) {
+            await db.promise().query('DELETE FROM subtitles WHERE video_id = ?', [resolvedVideoId]);
+        }
+
+        const sql = `INSERT INTO subtitles (video_id, start_time, end_time, en_text, vn_text, word_timings) VALUES (?, ?, ?, ?, ?, ?)`;
+        for (const row of normalizedRows) {
+            await db.promise().query(sql, [
+                resolvedVideoId,
+                row.start,
+                row.end,
+                row.en_text,
+                row.vn_text,
+                row.word_timings,
+            ]);
+        }
+
+        const untranslated = normalizedRows.filter((item) => !String(item.vn_text || '').trim()).length;
+
+        return res.json({
+            success: true,
+            message: 'Import subtitles thanh cong',
+            video_id: resolvedVideoId,
+            imported: normalizedRows.length,
+            untranslated,
+            replaced_existing: shouldReplace,
+        });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ success: false, message: err.message });
+    }
+};
+
 exports.extractAndTranslateSubtitles = async (req, res) => {
     try {
         const { db_video_id, youtube_id } = req.body;

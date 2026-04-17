@@ -105,6 +105,19 @@ Then deploy.
 - Configure `YOUTUBE_PROXY_URL` in Render Environment.
 - Redeploy backend and retry the same video.
 
+### No budget fallback (không cần proxy trả phí)
+
+If server cannot fetch YouTube captions, import captions from your local machine (where YouTube is accessible):
+
+1. Ensure backend deployed with latest code.
+2. From local repo:
+	- `cd backend`
+	- `npm run subtitles:import-local -- --api https://<your-render-service>.onrender.com/api --video-id <DB_VIDEO_ID> --youtube-id <YOUTUBE_ID>`
+3. Script will:
+	- fetch transcript locally,
+	- call `/api/youtube/subtitles/import`,
+	- then auto call `/api/youtube/subtitles/retranslate` in rounds.
+
 ## 6) Optional custom domain (later)
 
 After everything works on `.pages.dev`, add custom domain in Cloudflare Pages.

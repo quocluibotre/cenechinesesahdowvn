@@ -8,6 +8,9 @@ router.post('/process', youtubeController.processVideoUrl);
 // Nguồn cho frontend truyền id -> Cào caption -> LLM dịch -> Sql insert
 router.post('/subtitles/translate', youtubeController.extractAndTranslateSubtitles);
 
+// Import subtitle EN từ local client (fallback khi server bị YouTube block)
+router.post('/subtitles/import', youtubeController.importSubtitles);
+
 // Re-translate chỉ các phụ đề còn "Chưa dịch" trong DB
 router.post('/subtitles/retranslate', youtubeController.retranslateSubtitles);
 
