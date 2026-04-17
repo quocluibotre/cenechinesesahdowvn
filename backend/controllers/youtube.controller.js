@@ -53,6 +53,9 @@ function createYouTubeProxySettings(proxyUrl) {
 }
 
 const YOUTUBE_PROXY_SETTINGS = createYouTubeProxySettings(YOUTUBE_PROXY_URL);
+const YOUTUBE_PROXY_STATE = YOUTUBE_PROXY_SETTINGS
+    ? 'enabled'
+    : (YOUTUBE_PROXY_URL ? 'invalid' : 'disabled');
 
 if (YOUTUBE_PROXY_URL && !YOUTUBE_PROXY_SETTINGS) {
     console.warn('[YouTube] Ignoring invalid YOUTUBE_PROXY_URL format.');
@@ -1216,7 +1219,7 @@ exports.extractAndTranslateSubtitles = async (req, res) => {
                 if (isBlockedCase) {
                     return res.status(200).json({
                         success: false,
-                        message: 'Không thể lấy phụ đề lúc này: YouTube đang chặn request từ server (IP/rate-limit/region). Hãy thử lại sau hoặc đổi server/proxy.',
+                        message: `Không thể lấy phụ đề lúc này: YouTube đang chặn request từ server (IP/rate-limit/region). Hãy thử lại sau hoặc đổi server/proxy. (proxy: ${YOUTUBE_PROXY_STATE})`,
                     });
                 }
 
@@ -1440,9 +1443,10 @@ exports.debugTranscript = async (req, res) => {
             success: true,
             available_tracks: captionTracks.map(t => ({ lang: t.languageCode, name: t.name?.simpleText })),
             selected: track.languageCode,
-            xml_sample: xmlRes.data.substring(0, 500)
+            xml_sample: xmlRes.data.substring(0, 500),
+            proxy_state: YOUTUBE_PROXY_STATE,
         });
     } catch (err) {
-        return res.status(500).json({ success: false, error: err.message });
+        return res.status(500).json({ success: false, error: err.message, proxy_state: YOUTUBE_PROXY_STATE });
     }
 };
