@@ -24,17 +24,39 @@ function createYouTubeProxySettings(proxyUrl) {
         return null;
     }
 
+    const unquotedUrl = safeUrl
+        .replace(/^"([\s\S]*)"$/, '$1')
+        .replace(/^'([\s\S]*)'$/, '$1')
+        .trim();
+
+    const withProtocol = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(unquotedUrl)
+        ? unquotedUrl
+        : `http://${unquotedUrl}`;
+
+    const safeDecode = (value) => {
+        try {
+            return decodeURIComponent(String(value || ''));
+        } catch {
+            return String(value || '');
+        }
+    };
+
     try {
-        const parsed = new URL(safeUrl);
+        const parsed = new URL(withProtocol);
         const protocol = String(parsed.protocol || '').replace(':', '').toLowerCase();
+
+        if (protocol !== 'http' && protocol !== 'https') {
+            return null;
+        }
+
         const port = Number(parsed.port || (protocol === 'https' ? 443 : 80));
 
         if (!parsed.hostname || !Number.isFinite(port) || port <= 0) {
             return null;
         }
 
-        const username = decodeURIComponent(parsed.username || '');
-        const password = decodeURIComponent(parsed.password || '');
+        const username = safeDecode(parsed.username || '');
+        const password = safeDecode(parsed.password || '');
 
         return {
             protocol,
@@ -48,7 +70,85 @@ function createYouTubeProxySettings(proxyUrl) {
                 : null,
         };
     } catch {
-        return null;
+        // Manual fallback for raw credentials that are not URL-encoded.
+        // Supported examples:
+        // - user:pass@host:port
+        // - http://user:pa:ss@host:port
+        // - host:port
+        const normalized = withProtocol.replace(/^https?:\/\//i, '');
+        const slashIndex = normalized.indexOf('/');
+        const endpoint = slashIndex >= 0 ? normalized.slice(0, slashIndex) : normalized;
+
+        if (!endpoint) {
+            return null;
+        }
+
+        const lastAt = endpoint.lastIndexOf('@');
+        const authPart = lastAt >= 0 ? endpoint.slice(0, lastAt) : '';
+        const hostPortPart = lastAt >= 0 ? endpoint.slice(lastAt + 1) : endpoint;
+
+        if (!hostPortPart) {
+            return null;
+        }
+
+        let host = hostPortPart;
+        let port = null;
+
+        if (hostPortPart.startsWith('[')) {
+            const endBracket = hostPortPart.indexOf(']');
+            if (endBracket <= 0) {
+                return null;
+            }
+
+            host = hostPortPart.slice(1, endBracket);
+            const afterBracket = hostPortPart.slice(endBracket + 1);
+            if (afterBracket.startsWith(':')) {
+                port = Number(afterBracket.slice(1));
+            }
+        } else {
+            const lastColon = hostPortPart.lastIndexOf(':');
+            if (lastColon > 0 && lastColon < hostPortPart.length - 1) {
+                host = hostPortPart.slice(0, lastColon);
+                port = Number(hostPortPart.slice(lastColon + 1));
+            }
+        }
+
+        const protocolMatch = withProtocol.match(/^([a-zA-Z][a-zA-Z\d+.-]*):\/\//);
+        const protocol = String(protocolMatch?.[1] || 'http').toLowerCase();
+        if (protocol !== 'http' && protocol !== 'https') {
+            return null;
+        }
+
+        const resolvedPort = Number.isFinite(port) && port > 0
+            ? Number(port)
+            : (protocol === 'https' ? 443 : 80);
+
+        if (!host || !Number.isFinite(resolvedPort) || resolvedPort <= 0) {
+            return null;
+        }
+
+        let auth = null;
+        if (authPart) {
+            const firstColon = authPart.indexOf(':');
+            if (firstColon >= 0) {
+                auth = {
+                    username: authPart.slice(0, firstColon),
+                    password: authPart.slice(firstColon + 1),
+                };
+            } else {
+                auth = {
+                    username: authPart,
+                    password: '',
+                };
+            }
+        }
+
+        return {
+            protocol,
+            host,
+            port: resolvedPort,
+            auth,
+        };
     }
 }
 
