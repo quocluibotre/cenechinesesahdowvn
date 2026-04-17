@@ -505,6 +505,16 @@ async function fetchYouTubeMetadataWithoutApiKey(videoId) {
     };
 }
 
+function buildMinimalYouTubeMetadata(videoId) {
+    const safeVideoId = String(videoId || '').trim();
+    return {
+        title: `YouTube Video ${safeVideoId}`,
+        thumbnail: `https://i.ytimg.com/vi/${safeVideoId}/hqdefault.jpg`,
+        durationSecs: 0,
+        fallback: true,
+    };
+}
+
 function normalizeTranslateEngine(value) {
     const normalized = String(value || '').trim().toLowerCase();
     if (['gemini', 'llm'].includes(normalized)) return 'gemini';
@@ -925,10 +935,8 @@ exports.processVideoUrl = async (req, res) => {
         }
 
         if (!metadata) {
-            return res.status(404).json({
-                success: false,
-                message: 'Khong lay duoc metadata video tu YouTube. Vui long kiem tra link hoac cau hinh YOUTUBE_API_KEY.',
-            });
+            metadata = buildMinimalYouTubeMetadata(videoId);
+            console.warn(`[YouTube] Metadata unavailable for videoId=${videoId}, using minimal fallback metadata.`);
         }
 
         const { title, thumbnail, durationSecs } = metadata;
@@ -960,6 +968,7 @@ exports.processVideoUrl = async (req, res) => {
         res.json({
             success: true,
             message: 'Video processed successfully',
+            metadata_fallback: Boolean(metadata?.fallback),
             data: {
                 id: resolvedInsertId,
                 youtube_id: videoId,
