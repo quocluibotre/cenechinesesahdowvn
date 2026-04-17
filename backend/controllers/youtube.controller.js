@@ -1,5 +1,6 @@
 const db = require('../config/db.config');
 const axios = require('axios');
+const { YoutubeTranscript } = require('youtube-transcript');
 
 const TRANSLATE_ENGINE = String(process.env.YOUTUBE_TRANSLATE_ENGINE || 'fast').trim().toLowerCase();
 const TRANSLATE_CONCURRENCY = Math.max(1, Math.min(12, Number(process.env.YOUTUBE_TRANSLATE_CONCURRENCY || 6)));
@@ -30,6 +31,65 @@ function parseISO8601Duration(duration) {
     const minutes = (parseInt(match[2]) || 0);
     const seconds = (parseInt(match[3]) || 0);
     return hours * 3600 + minutes * 60 + seconds;
+}
+
+function normalizeTranscriptTime(rawValue) {
+    const parsed = Number(rawValue || 0);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        return 0;
+    }
+
+    // youtube-transcript may return ms, while other paths use seconds.
+    return parsed > 1000 ? parsed / 1000 : parsed;
+}
+
+async function fetchYouTubeTranscriptByLibrary(videoId) {
+    if (!YoutubeTranscript || typeof YoutubeTranscript.fetchTranscript !== 'function') {
+        throw new Error('Transcript fallback library unavailable');
+    }
+
+    const languageCandidates = ['en', 'en-US', 'en-GB', null];
+    let lastError = null;
+
+    for (const lang of languageCandidates) {
+        try {
+            const options = lang ? { lang } : undefined;
+            const rows = options
+                ? await YoutubeTranscript.fetchTranscript(videoId, options)
+                : await YoutubeTranscript.fetchTranscript(videoId);
+
+            if (!Array.isArray(rows) || rows.length === 0) {
+                continue;
+            }
+
+            const captions = rows
+                .map((item) => {
+                    const text = String(item?.text || '').replace(/\s+/g, ' ').trim();
+                    const start = normalizeTranscriptTime(item?.offset ?? item?.start ?? item?.startMs);
+                    const dur = normalizeTranscriptTime(item?.duration ?? item?.dur ?? item?.durationMs);
+
+                    if (!text) {
+                        return null;
+                    }
+
+                    return {
+                        text,
+                        start,
+                        dur: dur > 0 ? dur : 2,
+                        words: null,
+                    };
+                })
+                .filter(Boolean);
+
+            if (captions.length) {
+                return captions;
+            }
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    throw lastError || new Error('No transcript returned by fallback library');
 }
 
 async function fetchYouTubeMetadataWithApiKey(videoId, apiKey) {
@@ -930,18 +990,30 @@ exports.extractAndTranslateSubtitles = async (req, res) => {
         try {
             captions = await fetchYouTubeTranscript(youtube_id);
             console.log(`✅ Fetched ${captions.length} captions from InnerTube API`);
-        } catch (e) {
-            console.error('InnerTube fetch error:', e.message);
-            return res.status(404).json({
-                success: false,
-                message: `Không thể lấy phụ đề: ${e.message}`
-            });
+        } catch (innerError) {
+            console.warn('InnerTube fetch error:', innerError?.message || innerError);
+
+            try {
+                captions = await fetchYouTubeTranscriptByLibrary(youtube_id);
+                console.log(`✅ Fetched ${captions.length} captions via youtube-transcript fallback`);
+            } catch (fallbackError) {
+                const combinedMessage = `${innerError?.message || ''} ${fallbackError?.message || ''}`.toLowerCase();
+                const noCaptionPattern = /caption tracks|no transcript|transcript is disabled|subtitles are disabled|could not retrieve a transcript|no subtitles|không có phụ đề/i;
+                const isNoCaptionCase = noCaptionPattern.test(combinedMessage);
+
+                return res.status(isNoCaptionCase ? 200 : 404).json({
+                    success: false,
+                    message: isNoCaptionCase
+                        ? 'Không thể lấy phụ đề: Video này không có phụ đề công khai hoặc chủ video đã tắt caption.'
+                        : `Không thể lấy phụ đề: ${fallbackError?.message || innerError?.message || 'Unknown error'}`,
+                });
+            }
         }
 
         if (captions.length === 0) {
-            return res.status(404).json({
+            return res.status(200).json({
                 success: false,
-                message: 'Phụ đề trống hoặc không parse được từ XML của YouTube.'
+                message: 'Không thể lấy phụ đề: Video này không có phụ đề công khai hoặc transcript rỗng.'
             });
         }
 
