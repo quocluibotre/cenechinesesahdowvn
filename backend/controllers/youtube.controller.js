@@ -1063,15 +1063,26 @@ exports.extractAndTranslateSubtitles = async (req, res) => {
                 captions = await fetchYouTubeTranscriptByLibrary(youtube_id);
                 console.log(`✅ Fetched ${captions.length} captions via youtube-transcript fallback`);
             } catch (fallbackError) {
-                const combinedMessage = `${innerError?.message || ''} ${fallbackError?.message || ''}`.toLowerCase();
+                const innerMessage = String(innerError?.message || '').trim();
+                const fallbackMessage = String(fallbackError?.message || '').trim();
+                const combinedMessage = `${innerMessage} ${fallbackMessage}`.toLowerCase();
                 const noCaptionPattern = /caption tracks|no transcript|transcript is disabled|subtitles are disabled|could not retrieve a transcript|no subtitles|không có phụ đề/i;
+                const blockedPattern = /captcha|too many requests|rate limit|\b429\b|sign in to confirm your age|access denied|forbidden|unavailable in your country|temporarily blocked|ip/i;
                 const isNoCaptionCase = noCaptionPattern.test(combinedMessage);
+                const isBlockedCase = blockedPattern.test(combinedMessage);
 
-                return res.status(isNoCaptionCase ? 200 : 404).json({
+                if (isBlockedCase) {
+                    return res.status(200).json({
+                        success: false,
+                        message: 'Không thể lấy phụ đề lúc này: YouTube đang chặn request từ server (IP/rate-limit/region). Hãy thử lại sau hoặc đổi server/proxy.',
+                    });
+                }
+
+                return res.status(200).json({
                     success: false,
                     message: isNoCaptionCase
                         ? 'Không thể lấy phụ đề: Video này không có phụ đề công khai hoặc chủ video đã tắt caption.'
-                        : `Không thể lấy phụ đề: ${fallbackError?.message || innerError?.message || 'Unknown error'}`,
+                        : `Không thể lấy phụ đề: ${fallbackMessage || innerMessage || 'Unknown error'}`,
                 });
             }
         }
