@@ -71,6 +71,14 @@ const normalizeTrackValue = (value, fallback = 'chinese') => {
   return fallback;
 };
 
+const extractYouTubeIdFromUrl = (videoUrl) => {
+  const safeUrl = String(videoUrl || '').trim();
+  if (!safeUrl) return '';
+
+  const match = safeUrl.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([A-Za-z0-9_-]{11})/i);
+  return match?.[1] || '';
+};
+
 const normalizeSlangEntries = (entries) => {
   if (!Array.isArray(entries)) {
     return [];
@@ -307,6 +315,7 @@ const Admin = () => {
   const [ytRetranslateId, setYtRetranslateId] = useState('');
   const [retranslateStatus, setRetranslateStatus] = useState('');
   const [isRetranslating, setIsRetranslating] = useState(false);
+  const editYoutubeId = useMemo(() => extractYouTubeIdFromUrl(editForm?.video_url), [editForm?.video_url]);
 
   const userCountText = useMemo(() => `${users.length} người dùng`, [users.length]);
   const adminTabs = [
@@ -1091,6 +1100,9 @@ const Admin = () => {
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold text-blue-950 line-clamp-2">{video.title}</p>
                       <p className="text-xs text-glass-subtle line-clamp-1 mt-0.5">{video.title_cn || ''}</p>
+                      <p className="text-xs text-blue-700/80 mt-0.5">
+                        ID: {video.id} | YT: {extractYouTubeIdFromUrl(video.video_url) || '-'}
+                      </p>
                       <div className="flex flex-wrap gap-2 mt-1 text-xs text-glass-subtle">
                         <span>HSK {video.hsk_level}</span>
                         <span>{normalizeTrackValue(video.language_track, 'chinese') === 'english' ? 'English' : 'Chinese'}</span>
@@ -1138,6 +1150,7 @@ const Admin = () => {
                       <td>
                         <div className="font-medium text-blue-950">{video.title}</div>
                         <div className="text-xs text-glass-subtle">{video.title_cn || ''}</div>
+                        <div className="text-xs text-blue-700/80 mt-0.5">ID: {video.id} | YT: {extractYouTubeIdFromUrl(video.video_url) || '-'}</div>
                       </td>
                       <td className="font-medium text-blue-900">HSK {video.hsk_level}</td>
                       <td className="font-medium text-blue-900">{normalizeTrackValue(video.language_track, 'chinese') === 'english' ? 'English' : 'Chinese'}</td>
@@ -1178,6 +1191,10 @@ const Admin = () => {
                     <span className="material-symbols-outlined text-blue-600">edit_square</span>
                     Sửa video #{editVideoId}
                   </h3>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <span className="glass-chip px-2.5 py-1 text-blue-800">DB ID: {editVideoId}</span>
+                  <span className="glass-chip px-2.5 py-1 text-blue-800">YouTube ID: {editYoutubeId || '-'}</span>
                 </div>
                 <p className="text-xs text-glass-subtle">Chọn file để upload lên Cloudflare R2, hoặc giữ nguyên URL cũ nếu không muốn thay đổi.</p>
 
