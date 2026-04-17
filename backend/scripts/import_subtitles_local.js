@@ -29,7 +29,7 @@ function normalizeTime(value, treatAsMilliseconds = false) {
         return parsed / 1000;
     }
 
-    return parsed > 1000 ? parsed / 1000 : parsed;
+    return parsed;
 }
 
 function resolveApiBase(raw) {
@@ -107,7 +107,8 @@ function mapRowsToPayload(rows) {
                 en_text: text,
             };
         })
-        .filter(Boolean);
+        .filter(Boolean)
+        .sort((a, b) => a.start - b.start);
 }
 
 function buildHeaders(token) {

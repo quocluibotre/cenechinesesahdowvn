@@ -308,8 +308,7 @@ function normalizeTranscriptTime(rawValue, treatAsMilliseconds = false) {
         return parsed / 1000;
     }
 
-    // youtube-transcript may return ms, while other paths use seconds.
-    return parsed > 1000 ? parsed / 1000 : parsed;
+    return parsed;
 }
 
 async function resolveTranscriptApi() {

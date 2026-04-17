@@ -72,6 +72,8 @@ function Get-AuthHeaders {
 function Test-BrokenSubtitleTiming {
     param([array]$Rows)
 
+    $bucketCounts = @{}
+
     foreach ($row in $Rows) {
         $start = 0
         $end = 0
@@ -85,6 +87,21 @@ function Test-BrokenSubtitleTiming {
 
         $duration = $end - $start
         if ($duration -le 0 -or $duration -gt 120) {
+            return $true
+        }
+
+        $bucket = [int][math]::Floor($start)
+        if ($bucketCounts.ContainsKey($bucket)) {
+            $bucketCounts[$bucket] = [int]$bucketCounts[$bucket] + 1
+        } else {
+            $bucketCounts[$bucket] = 1
+        }
+    }
+
+    if ($bucketCounts.Count -gt 0) {
+        $maxBucketCount = ($bucketCounts.Values | Measure-Object -Maximum).Maximum
+        if ([int]$maxBucketCount -ge 15) {
+            # Collapsed timeline symptom: many full-sentence rows stacked in the same 1-second slot.
             return $true
         }
     }
