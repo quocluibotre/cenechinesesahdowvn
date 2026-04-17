@@ -69,6 +69,29 @@ function Get-AuthHeaders {
     return $headers
 }
 
+function Test-BrokenSubtitleTiming {
+    param([array]$Rows)
+
+    foreach ($row in $Rows) {
+        $start = 0
+        $end = 0
+
+        try {
+            $start = [double]$row.start_time
+            $end = [double]$row.end_time
+        } catch {
+            continue
+        }
+
+        $duration = $end - $start
+        if ($duration -le 0 -or $duration -gt 120) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 $apiBase = Resolve-ApiBase -Raw $Api
 $headers = Get-AuthHeaders -RawToken $Token
 $importScript = Join-Path $PSScriptRoot 'import_subtitles_local.js'
@@ -130,7 +153,14 @@ foreach ($video in $videos) {
     }
 
     $count = [int]($subResp.count)
-    if ($count -gt 0) {
+    $rows = @($subResp.data)
+    $needsTimingRepair = $false
+
+    if ($count -gt 0 -and $rows.Count -gt 0) {
+        $needsTimingRepair = Test-BrokenSubtitleTiming -Rows $rows
+    }
+
+    if ($count -gt 0 -and -not $needsTimingRepair) {
         continue
     }
 
@@ -144,10 +174,11 @@ foreach ($video in $videos) {
         id = $videoId
         youtube_id = $youtubeId
         title = [string]$video.title
+        reason = $(if ($needsTimingRepair) { 'repair-timing' } else { 'missing-subtitle' })
     }
 }
 
-Write-Host "[scan] missing-subtitle videos=$($targets.Count)"
+Write-Host "[scan] target videos=$($targets.Count)"
 
 if ($targets.Count -eq 0) {
     Write-Host '[done] no missing subtitle videos'
@@ -156,7 +187,7 @@ if ($targets.Count -eq 0) {
 
 if ($DryRun) {
     foreach ($item in $targets) {
-        Write-Host "[dry-run] video_id=$($item.id) youtube_id=$($item.youtube_id) title=$($item.title)"
+        Write-Host "[dry-run] reason=$($item.reason) video_id=$($item.id) youtube_id=$($item.youtube_id) title=$($item.title)"
     }
     exit 0
 }
@@ -165,7 +196,7 @@ $ok = 0
 $failed = 0
 
 foreach ($item in $targets) {
-    Write-Host "[run] import video_id=$($item.id) youtube_id=$($item.youtube_id)"
+    Write-Host "[run] reason=$($item.reason) import video_id=$($item.id) youtube_id=$($item.youtube_id)"
 
     $nodeArgs = @(
         $importScript,

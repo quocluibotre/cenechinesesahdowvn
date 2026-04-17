@@ -21,9 +21,14 @@ function parseArgs(argv) {
     return args;
 }
 
-function normalizeTime(value) {
+function normalizeTime(value, treatAsMilliseconds = false) {
     const parsed = Number(value || 0);
     if (!Number.isFinite(parsed) || parsed < 0) return 0;
+
+    if (treatAsMilliseconds) {
+        return parsed / 1000;
+    }
+
     return parsed > 1000 ? parsed / 1000 : parsed;
 }
 
@@ -80,13 +85,25 @@ function mapRowsToPayload(rows) {
             const text = String(row?.text || '').replace(/\s+/g, ' ').trim();
             if (!text) return null;
 
-            const start = normalizeTime(row?.offset ?? row?.start ?? row?.startMs);
-            const dur = normalizeTime(row?.duration ?? row?.dur ?? row?.durationMs);
-            const safeDur = dur > 0 ? dur : 2;
+            const rawStart = Number(row?.offset ?? row?.start ?? row?.startMs ?? 0);
+            const rawDur = Number(row?.duration ?? row?.dur ?? row?.durationMs ?? 0);
+            const likelyMilliseconds = Number.isFinite(rawDur) && rawDur > 30;
+
+            const start = normalizeTime(rawStart, likelyMilliseconds);
+            let dur = normalizeTime(rawDur, likelyMilliseconds);
+
+            if (!Number.isFinite(dur) || dur <= 0) {
+                dur = 2;
+            }
+
+            if (dur > 45) {
+                dur = 6;
+            }
 
             return {
-                start,
-                end: Number((start + safeDur).toFixed(3)),
+                start: Number(start.toFixed(3)),
+                dur: Number(dur.toFixed(3)),
+                end: Number((start + dur).toFixed(3)),
                 en_text: text,
             };
         })

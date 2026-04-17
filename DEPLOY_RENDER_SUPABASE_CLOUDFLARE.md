@@ -126,6 +126,8 @@ Bulk mode for many videos with missing subtitles:
 - Run real import:
 	- `powershell -ExecutionPolicy Bypass -File .\\scripts\\import_missing_subtitles.ps1 -Api https://<your-render-service>.onrender.com/api -MaxRounds 6`
 
+Note: bulk script now auto-targets videos with broken subtitle timing (extreme duration) for repair, not only missing subtitles.
+
 ## 6) Optional custom domain (later)
 
 After everything works on `.pages.dev`, add custom domain in Cloudflare Pages.

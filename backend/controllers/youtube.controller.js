@@ -298,10 +298,14 @@ function parseISO8601Duration(duration) {
     return hours * 3600 + minutes * 60 + seconds;
 }
 
-function normalizeTranscriptTime(rawValue) {
+function normalizeTranscriptTime(rawValue, treatAsMilliseconds = false) {
     const parsed = Number(rawValue || 0);
     if (!Number.isFinite(parsed) || parsed < 0) {
         return 0;
+    }
+
+    if (treatAsMilliseconds) {
+        return parsed / 1000;
     }
 
     // youtube-transcript may return ms, while other paths use seconds.
@@ -398,8 +402,16 @@ async function fetchYouTubeTranscriptByLibrary(videoId) {
             const captions = rows
                 .map((item) => {
                     const text = String(item?.text || '').replace(/\s+/g, ' ').trim();
-                    const start = normalizeTranscriptTime(item?.offset ?? item?.start ?? item?.startMs);
-                    const dur = normalizeTranscriptTime(item?.duration ?? item?.dur ?? item?.durationMs);
+                    const rawStart = Number(item?.offset ?? item?.start ?? item?.startMs ?? 0);
+                    const rawDur = Number(item?.duration ?? item?.dur ?? item?.durationMs ?? 0);
+                    const likelyMilliseconds = Number.isFinite(rawDur) && rawDur > 30;
+                    const start = normalizeTranscriptTime(rawStart, likelyMilliseconds);
+                    let dur = normalizeTranscriptTime(rawDur, likelyMilliseconds);
+
+                    if (dur > 45) {
+                        // A single subtitle line lasting >45s is usually malformed timing.
+                        dur = 6;
+                    }
 
                     if (!text) {
                         return null;
@@ -1223,12 +1235,45 @@ function normalizeImportedSubtitleRow(item) {
     const startRaw = toFiniteNumber(item?.start ?? item?.start_time, 0);
     const endCandidate = item?.end ?? item?.end_time;
     const durCandidate = item?.dur ?? item?.duration;
-    const endRaw = endCandidate != null
-        ? toFiniteNumber(endCandidate, startRaw)
-        : (startRaw + Math.max(0, toFiniteNumber(durCandidate, 2)));
+    const endRaw = endCandidate != null ? toFiniteNumber(endCandidate, Number.NaN) : Number.NaN;
+    const durRaw = durCandidate != null ? toFiniteNumber(durCandidate, Number.NaN) : Number.NaN;
 
-    const safeStart = Math.max(0, startRaw);
-    const safeEnd = Math.max(safeStart + 0.1, endRaw);
+    const likelyMilliseconds = (
+        Number.isFinite(durRaw) && durRaw > 30
+    ) || (
+        Number.isFinite(endRaw) && Number.isFinite(startRaw) && endRaw > 1000 && (endRaw - startRaw) > 120
+    );
+
+    const normalizedStart = normalizeTranscriptTime(startRaw, likelyMilliseconds);
+    let normalizedEnd = Number.isFinite(endRaw)
+        ? normalizeTranscriptTime(endRaw, likelyMilliseconds)
+        : Number.NaN;
+    let normalizedDur = Number.isFinite(durRaw)
+        ? normalizeTranscriptTime(durRaw, likelyMilliseconds)
+        : Number.NaN;
+
+    if (!Number.isFinite(normalizedDur) || normalizedDur <= 0) {
+        if (Number.isFinite(normalizedEnd)) {
+            normalizedDur = Math.max(0, normalizedEnd - normalizedStart);
+        } else {
+            normalizedDur = 2;
+        }
+    }
+
+    if (normalizedDur > 45) {
+        normalizedDur = 6;
+    }
+
+    if (!Number.isFinite(normalizedEnd)) {
+        normalizedEnd = normalizedStart + normalizedDur;
+    }
+
+    if ((normalizedEnd - normalizedStart) > 45) {
+        normalizedEnd = normalizedStart + 6;
+    }
+
+    const safeStart = Math.max(0, normalizedStart);
+    const safeEnd = Math.max(safeStart + 0.1, normalizedEnd);
 
     const vnText = String(item?.vn_text || '').trim();
     const words = parseImportedWordTimings(item?.words ?? item?.word_timings);
