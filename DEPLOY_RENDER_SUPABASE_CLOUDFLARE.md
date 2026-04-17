@@ -47,6 +47,7 @@ Optional for YouTube subtitle extraction stability on Render:
 - `YOUTUBE_PROXY_URL=http://<user>:<pass>@<proxy-host>:<proxy-port>`
 - If password has special characters like `@`, `#`, `%`, `:` prefer URL-encoding or use format without scheme (`user:pass@host:port`) because backend now supports tolerant parsing.
 - `YOUTUBE_API_KEY` is optional for metadata and does not solve server IP/rate-limit/region blocking for transcript extraction.
+- Do not keep placeholder values like `proxy-host` or `<proxy-host>` in production env.
 
 CORS variable (set after you have Cloudflare URL):
 - `CORS_ORIGINS=https://<your-project>.pages.dev`

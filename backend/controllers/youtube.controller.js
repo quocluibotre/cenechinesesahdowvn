@@ -41,6 +41,20 @@ function createYouTubeProxySettings(proxyUrl) {
         }
     };
 
+    const isPlaceholderHost = (host) => {
+        const normalized = String(host || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[<>]/g, '');
+
+        return [
+            'proxy-host',
+            'your-proxy-host',
+            'proxy_host',
+            'your_proxy_host',
+        ].includes(normalized);
+    };
+
     try {
         const parsed = new URL(withProtocol);
         const protocol = String(parsed.protocol || '').replace(':', '').toLowerCase();
@@ -52,6 +66,10 @@ function createYouTubeProxySettings(proxyUrl) {
         const port = Number(parsed.port || (protocol === 'https' ? 443 : 80));
 
         if (!parsed.hostname || !Number.isFinite(port) || port <= 0) {
+            return null;
+        }
+
+        if (isPlaceholderHost(parsed.hostname)) {
             return null;
         }
 
@@ -127,6 +145,10 @@ function createYouTubeProxySettings(proxyUrl) {
             return null;
         }
 
+        if (isPlaceholderHost(host)) {
+            return null;
+        }
+
         let auth = null;
         if (authPart) {
             const firstColon = authPart.indexOf(':');
@@ -158,7 +180,7 @@ const YOUTUBE_PROXY_STATE = YOUTUBE_PROXY_SETTINGS
     : (YOUTUBE_PROXY_URL ? 'invalid' : 'disabled');
 
 if (YOUTUBE_PROXY_URL && !YOUTUBE_PROXY_SETTINGS) {
-    console.warn('[YouTube] Ignoring invalid YOUTUBE_PROXY_URL format.');
+    console.warn('[YouTube] Ignoring invalid YOUTUBE_PROXY_URL format or placeholder value.');
 }
 
 if (YOUTUBE_PROXY_SETTINGS) {
@@ -1322,8 +1344,17 @@ exports.extractAndTranslateSubtitles = async (req, res) => {
                 const combinedMessage = `${innerMessage} ${fallbackMessage}`.toLowerCase();
                 const noCaptionPattern = /caption tracks|no transcript|transcript is disabled|subtitles are disabled|could not retrieve a transcript|no subtitles|không có phụ đề/i;
                 const blockedPattern = /captcha|too many requests|rate limit|\b429\b|sign in to confirm your age|access denied|forbidden|unavailable in your country|temporarily blocked|ip/i;
+                const proxyFailurePattern = /enotfound|eai_again|econnrefused|proxy|socket hang up|etimedout|self signed certificate|unable to verify the first certificate/i;
                 const isNoCaptionCase = noCaptionPattern.test(combinedMessage);
                 const isBlockedCase = blockedPattern.test(combinedMessage);
+                const isProxyFailureCase = YOUTUBE_PROXY_STATE !== 'disabled' && proxyFailurePattern.test(combinedMessage);
+
+                if (isProxyFailureCase) {
+                    return res.status(200).json({
+                        success: false,
+                        message: `Không thể lấy phụ đề: Proxy YouTube đang sai cấu hình hoặc không truy cập được. Hãy kiểm tra YOUTUBE_PROXY_URL và DNS/proxy server. (proxy: ${YOUTUBE_PROXY_STATE})`,
+                    });
+                }
 
                 if (isBlockedCase) {
                     return res.status(200).json({
