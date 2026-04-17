@@ -100,10 +100,16 @@ function mapRowsToPayload(rows) {
                 dur = 6;
             }
 
+            // Send canonical millisecond payload so backend can normalize consistently,
+            // including older deployments that rely on ms-based heuristics.
+            const startMs = Math.max(0, Math.round(start * 1000));
+            const durMs = Math.max(100, Math.round(dur * 1000));
+            const endMs = startMs + durMs;
+
             return {
-                start: Number(start.toFixed(3)),
-                dur: Number(dur.toFixed(3)),
-                end: Number((start + dur).toFixed(3)),
+                start: startMs,
+                dur: durMs,
+                end: endMs,
                 en_text: text,
             };
         })
