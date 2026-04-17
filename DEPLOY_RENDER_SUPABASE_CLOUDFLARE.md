@@ -118,6 +118,14 @@ If server cannot fetch YouTube captions, import captions from your local machine
 	- call `/api/youtube/subtitles/import`,
 	- then auto call `/api/youtube/subtitles/retranslate` in rounds.
 
+Bulk mode for many videos with missing subtitles:
+
+- `cd backend`
+- Dry-run first:
+	- `powershell -ExecutionPolicy Bypass -File .\\scripts\\import_missing_subtitles.ps1 -Api https://<your-render-service>.onrender.com/api -DryRun`
+- Run real import:
+	- `powershell -ExecutionPolicy Bypass -File .\\scripts\\import_missing_subtitles.ps1 -Api https://<your-render-service>.onrender.com/api -MaxRounds 6`
+
 ## 6) Optional custom domain (later)
 
 After everything works on `.pages.dev`, add custom domain in Cloudflare Pages.
