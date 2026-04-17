@@ -1,6 +1,7 @@
 const db = require('../config/db.config');
 const axios = require('axios');
-const { YoutubeTranscript } = require('youtube-transcript');
+
+let transcriptApiLoaderPromise = null;
 
 const TRANSLATE_ENGINE = String(process.env.YOUTUBE_TRANSLATE_ENGINE || 'fast').trim().toLowerCase();
 const TRANSLATE_CONCURRENCY = Math.max(1, Math.min(12, Number(process.env.YOUTUBE_TRANSLATE_CONCURRENCY || 6)));
@@ -43,8 +44,73 @@ function normalizeTranscriptTime(rawValue) {
     return parsed > 1000 ? parsed / 1000 : parsed;
 }
 
+async function resolveTranscriptApi() {
+    if (transcriptApiLoaderPromise) {
+        return transcriptApiLoaderPromise;
+    }
+
+    transcriptApiLoaderPromise = (async () => {
+        const moduleCandidates = [];
+
+        try {
+            const cjsModule = require('youtube-transcript');
+            moduleCandidates.push(cjsModule);
+        } catch {
+            // ignore and try ESM variants below
+        }
+
+        try {
+            const esmModule = await import('youtube-transcript');
+            moduleCandidates.push(esmModule);
+        } catch {
+            // ignore and try direct ESM build below
+        }
+
+        try {
+            const esmBuildModule = await import('youtube-transcript/dist/youtube-transcript.esm.js');
+            moduleCandidates.push(esmBuildModule);
+        } catch {
+            // ignore, fallback will be unavailable
+        }
+
+        for (const mod of moduleCandidates) {
+            const staticApi = mod?.YoutubeTranscript;
+            if (staticApi && typeof staticApi.fetchTranscript === 'function') {
+                return {
+                    fetchTranscript: staticApi.fetchTranscript.bind(staticApi),
+                };
+            }
+
+            if (typeof mod?.fetchTranscript === 'function') {
+                return {
+                    fetchTranscript: mod.fetchTranscript.bind(mod),
+                };
+            }
+
+            const defaultApi = mod?.default?.YoutubeTranscript;
+            if (defaultApi && typeof defaultApi.fetchTranscript === 'function') {
+                return {
+                    fetchTranscript: defaultApi.fetchTranscript.bind(defaultApi),
+                };
+            }
+
+            if (typeof mod?.default?.fetchTranscript === 'function') {
+                return {
+                    fetchTranscript: mod.default.fetchTranscript.bind(mod.default),
+                };
+            }
+        }
+
+        return null;
+    })();
+
+    return transcriptApiLoaderPromise;
+}
+
 async function fetchYouTubeTranscriptByLibrary(videoId) {
-    if (!YoutubeTranscript || typeof YoutubeTranscript.fetchTranscript !== 'function') {
+    const transcriptApi = await resolveTranscriptApi();
+
+    if (!transcriptApi || typeof transcriptApi.fetchTranscript !== 'function') {
         throw new Error('Transcript fallback library unavailable');
     }
 
@@ -55,8 +121,8 @@ async function fetchYouTubeTranscriptByLibrary(videoId) {
         try {
             const options = lang ? { lang } : undefined;
             const rows = options
-                ? await YoutubeTranscript.fetchTranscript(videoId, options)
-                : await YoutubeTranscript.fetchTranscript(videoId);
+                ? await transcriptApi.fetchTranscript(videoId, options)
+                : await transcriptApi.fetchTranscript(videoId);
 
             if (!Array.isArray(rows) || rows.length === 0) {
                 continue;
