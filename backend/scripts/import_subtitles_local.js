@@ -707,6 +707,58 @@ function buildHeaders(token) {
     return headers;
 }
 
+function estimatePayloadBytes(payload) {
+    try {
+        return Buffer.byteLength(JSON.stringify(payload), 'utf8');
+    } catch {
+        return Number.MAX_SAFE_INTEGER;
+    }
+}
+
+function buildImportPayloadChunks({
+    videoId,
+    youtubeId,
+    subtitles,
+    replaceExisting = true,
+    maxBytes = 85000,
+}) {
+    const items = Array.isArray(subtitles) ? subtitles : [];
+    if (!items.length) {
+        return [];
+    }
+
+    const safeMaxBytes = normalizeLimitedNumber(maxBytes, 20000, 5 * 1024 * 1024, 85000);
+    const chunks = [];
+    let currentChunk = [];
+
+    const buildPayload = (rows, shouldReplace) => ({
+        video_id: videoId,
+        youtube_id: youtubeId,
+        subtitles: rows,
+        replace_existing: shouldReplace,
+    });
+
+    for (const row of items) {
+        const candidateChunk = [...currentChunk, row];
+        const candidatePayload = buildPayload(candidateChunk, false);
+        const candidateBytes = estimatePayloadBytes(candidatePayload);
+
+        if (candidateBytes > safeMaxBytes && currentChunk.length > 0) {
+            chunks.push(currentChunk);
+            currentChunk = [row];
+            continue;
+        }
+
+        currentChunk = candidateChunk;
+    }
+
+    if (currentChunk.length) {
+        chunks.push(currentChunk);
+    }
+
+    return chunks.map((rows, index) => buildPayload(rows, index === 0 ? replaceExisting !== false : false));
+}
+
 async function callImportEndpoint(apiBase, headers, payload) {
     const url = `${apiBase}/youtube/subtitles/import`;
     const response = await axios.post(url, payload, { headers, timeout: 120000 });
@@ -772,6 +824,12 @@ async function main() {
         2800,
         1600
     );
+    const importMaxBytes = normalizeLimitedNumber(
+        args['import-max-bytes'] || process.env.SUBTITLE_IMPORT_MAX_BYTES,
+        20000,
+        5 * 1024 * 1024,
+        85000
+    );
     const shouldRetranslate = Boolean(args['with-retranslate']) || (!args['skip-retranslate'] && !useLocalAi);
     const maxRounds = args['max-rounds'] || process.env.RETRANSLATE_MAX_ROUNDS || 8;
 
@@ -820,20 +878,49 @@ async function main() {
     }
 
     const headers = buildHeaders(token);
-    const importPayload = {
-        video_id: videoId,
-        youtube_id: youtubeId,
+    const importPayloadChunks = buildImportPayloadChunks({
+        videoId,
+        youtubeId,
         subtitles: importSubtitles,
-        replace_existing: true,
-    };
+        replaceExisting: true,
+        maxBytes: importMaxBytes,
+    });
 
-    const importResult = await callImportEndpoint(apiBase, headers, importPayload);
-    if (!importResult?.success) {
-        throw new Error(importResult?.message || 'Import subtitles that bai');
+    if (!importPayloadChunks.length) {
+        throw new Error('Khong tao duoc payload import tu danh sach subtitle');
     }
 
     console.log(
-        `[import] success video_id=${importResult.video_id} imported=${importResult.imported} untranslated=${importResult.untranslated}`
+        `[import] uploading ${importSubtitles.length} lines in ${importPayloadChunks.length} chunk(s) (max_bytes=${importMaxBytes})`
+    );
+
+    let importedTotal = 0;
+    let untranslatedTotal = 0;
+    let resolvedVideoId = videoId;
+
+    for (let i = 0; i < importPayloadChunks.length; i += 1) {
+        const payload = importPayloadChunks[i];
+        const payloadBytes = estimatePayloadBytes(payload);
+        const importResult = await callImportEndpoint(apiBase, headers, payload);
+
+        if (!importResult?.success) {
+            throw new Error(importResult?.message || `Import subtitles that bai o chunk ${i + 1}`);
+        }
+
+        const importedCount = Number(importResult.imported || payload.subtitles.length || 0);
+        const untranslatedCount = Number(importResult.untranslated || 0);
+
+        importedTotal += importedCount;
+        untranslatedTotal += untranslatedCount;
+        resolvedVideoId = Number(importResult.video_id || resolvedVideoId || videoId);
+
+        console.log(
+            `[import] chunk ${i + 1}/${importPayloadChunks.length} success imported=${importedCount} untranslated=${untranslatedCount} bytes=${payloadBytes}`
+        );
+    }
+
+    console.log(
+        `[import] success video_id=${resolvedVideoId} imported=${importedTotal} untranslated=${untranslatedTotal} chunks=${importPayloadChunks.length}`
     );
 
     if (shouldRetranslate) {
@@ -845,6 +932,14 @@ async function main() {
 }
 
 main().catch((error) => {
-    console.error(`[error] ${error.message}`);
+    const responsePayload = error?.response?.data;
+    if (responsePayload) {
+        const details = typeof responsePayload === 'string'
+            ? responsePayload
+            : JSON.stringify(responsePayload);
+        console.error(`[error] ${error.message} | response=${details}`);
+    } else {
+        console.error(`[error] ${error.message}`);
+    }
     process.exit(1);
 });

@@ -15,6 +15,8 @@ const youtubeRoutes = require('./routes/youtube.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const JSON_BODY_LIMIT = String(process.env.JSON_BODY_LIMIT || process.env.BODY_LIMIT || '3mb').trim();
+const URLENCODED_BODY_LIMIT = String(process.env.URLENCODED_BODY_LIMIT || process.env.BODY_LIMIT || '3mb').trim();
 
 const normalize = (value) => String(value || '').trim().replace(/\/$/, '');
 
@@ -98,8 +100,8 @@ const corsOptions = {
 // Middleware
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: URLENCODED_BODY_LIMIT }));
 
 // Proxy Subtitle API (tương đương api/proxy_subtitle.php cũ)
 app.get('/api/proxy_subtitle', proxyUtils.proxySubtitle);
@@ -119,8 +121,20 @@ app.use('/api/youtube', youtubeRoutes); // Youtube custom pipeline
 
 // Error Handling Middleware
 app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).send({ message: 'Internal Server Error!' });
+    const statusCode = Number(err?.status || err?.statusCode || (err?.type === 'entity.too.large' ? 413 : 500));
+
+    if (statusCode === 413 || err?.type === 'entity.too.large') {
+        return res.status(413).json({
+            success: false,
+            message: 'Payload qua lon. Hay giam kich thuoc request hoac tang JSON_BODY_LIMIT tren server.',
+        });
+    }
+
+    console.error(err?.stack || err);
+    return res.status(statusCode).json({
+        success: false,
+        message: statusCode >= 500 ? 'Internal Server Error!' : (err?.message || 'Request failed'),
+    });
 });
 
 // Khởi động server
