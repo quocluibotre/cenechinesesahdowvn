@@ -6,6 +6,11 @@ param(
     [int]$MaxPages = 20,
     [int]$Limit = 50,
     [int]$MaxRounds = 6,
+    [switch]$LocalAi,
+    [string]$OllamaModel = "qwen2.5:7b",
+    [string]$OllamaUrl = "",
+    [int]$OllamaChunkSize = 6,
+    [switch]$WithRetranslate,
     [switch]$PublishedOnly,
     [switch]$SkipRetranslate,
     [switch]$DryRun
@@ -113,6 +118,14 @@ $apiBase = Resolve-ApiBase -Raw $Api
 $headers = Get-AuthHeaders -RawToken $Token
 $importScript = Join-Path $PSScriptRoot 'import_subtitles_local.js'
 
+if ($SkipRetranslate -and $WithRetranslate) {
+    throw "Cannot use -SkipRetranslate together with -WithRetranslate"
+}
+
+if ($OllamaChunkSize -lt 1) {
+    throw "OllamaChunkSize must be >= 1"
+}
+
 if (-not (Test-Path $importScript)) {
     throw "Cannot find import script at $importScript"
 }
@@ -202,6 +215,12 @@ if ($targets.Count -eq 0) {
     exit 0
 }
 
+if ($LocalAi) {
+    Write-Host "[mode] local-ai=on model=$OllamaModel chunk_size=$OllamaChunkSize with_retranslate=$WithRetranslate"
+} else {
+    Write-Host '[mode] local-ai=off'
+}
+
 if ($DryRun) {
     foreach ($item in $targets) {
         Write-Host "[dry-run] reason=$($item.reason) video_id=$($item.id) youtube_id=$($item.youtube_id) title=$($item.title)"
@@ -225,6 +244,24 @@ foreach ($item in $targets) {
 
     if ($Token) {
         $nodeArgs += @('--token', $Token)
+    }
+
+    if ($LocalAi) {
+        $nodeArgs += '--local-ai'
+
+        if (-not [string]::IsNullOrWhiteSpace($OllamaModel)) {
+            $nodeArgs += @('--ollama-model', $OllamaModel)
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($OllamaUrl)) {
+            $nodeArgs += @('--ollama-url', $OllamaUrl)
+        }
+
+        $nodeArgs += @('--ollama-chunk-size', [string]$OllamaChunkSize)
+    }
+
+    if ($WithRetranslate) {
+        $nodeArgs += '--with-retranslate'
     }
 
     if ($SkipRetranslate) {

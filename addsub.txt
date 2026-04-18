@@ -1,0 +1,36 @@
+TONG HOP LENH CHAY SUBTITLE (BATCH + LOCAL AI)
+
+0) Vao thu muc backend
+cd "D:\DAI_HOC\Chinese Shadow\backend"
+
+1) (Khuyen nghi) Dat model Ollama o o D truoc khi chay
+$env:OLLAMA_MODELS="D:\OllamaModels"
+
+2) Dry run (chi quet, khong import)
+powershell -ExecutionPolicy Bypass -File .\scripts\import_missing_subtitles.ps1 -Api https://cenechinesesahdowvn.onrender.com/api -DryRun
+
+3) Batch import thuong (khong Local AI)
+powershell -ExecutionPolicy Bypass -File .\scripts\import_missing_subtitles.ps1 -Api https://cenechinesesahdowvn.onrender.com/api -MaxRounds 6
+
+4) Batch import + Local AI (nhanh, khuyen nghi)
+powershell -ExecutionPolicy Bypass -File .\scripts\import_missing_subtitles.ps1 -Api https://cenechinesesahdowvn.onrender.com/api -LocalAi -OllamaModel qwen2.5:3b -OllamaChunkSize 14
+
+5) Batch import + Local AI (can bang chat luong)
+powershell -ExecutionPolicy Bypass -File .\scripts\import_missing_subtitles.ps1 -Api https://cenechinesesahdowvn.onrender.com/api -LocalAi -OllamaModel qwen2.5:7b -OllamaChunkSize 10
+
+6) Batch import + Local AI + retranslate backend (chat luong cao hon, cham hon)
+powershell -ExecutionPolicy Bypass -File .\scripts\import_missing_subtitles.ps1 -Api https://cenechinesesahdowvn.onrender.com/api -LocalAi -OllamaModel qwen2.5:7b -OllamaChunkSize 6 -WithRetranslate -MaxRounds 2
+
+7) Import 1 video (khong Local AI)
+npm run subtitles:import-local -- --api https://cenechinesesahdowvn.onrender.com/api --video-id ID_VIDEO --youtube-id YOUTUBE_ID --max-rounds 6
+
+8) Import 1 video + Local AI
+npm run subtitles:import-local -- --api https://cenechinesesahdowvn.onrender.com/api --video-id ID_VIDEO --youtube-id YOUTUBE_ID --local-ai --ollama-model qwen2.5:7b --ollama-chunk-size 6
+
+9) Import 1 video + Local AI + retranslate backend
+npm run subtitles:import-local -- --api https://cenechinesesahdowvn.onrender.com/api --video-id ID_VIDEO --youtube-id YOUTUBE_ID --local-ai --ollama-model qwen2.5:7b --ollama-chunk-size 6 --with-retranslate --max-rounds 2
+
+Ghi chu:
+- Khong duoc dung dong thoi -SkipRetranslate va -WithRetranslate.
+- Neu uu tien toc do: dung model 3b va chunk size 12-20.
+- Neu chua co model, tai truoc: ollama pull qwen2.5:3b (hoac qwen2.5:7b).

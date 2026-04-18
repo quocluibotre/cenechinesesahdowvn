@@ -134,6 +134,10 @@ Bulk mode for many videos with missing subtitles:
 	- `powershell -ExecutionPolicy Bypass -File .\\scripts\\import_missing_subtitles.ps1 -Api https://<your-render-service>.onrender.com/api -DryRun`
 - Run real import:
 	- `powershell -ExecutionPolicy Bypass -File .\\scripts\\import_missing_subtitles.ps1 -Api https://<your-render-service>.onrender.com/api -MaxRounds 6`
+- Run real import with local AI in one command:
+	- `powershell -ExecutionPolicy Bypass -File .\\scripts\\import_missing_subtitles.ps1 -Api https://<your-render-service>.onrender.com/api -LocalAi -OllamaModel qwen2.5:7b -OllamaChunkSize 6`
+- Run local AI + server re-translate (optional):
+	- `powershell -ExecutionPolicy Bypass -File .\\scripts\\import_missing_subtitles.ps1 -Api https://<your-render-service>.onrender.com/api -LocalAi -OllamaModel qwen2.5:7b -OllamaChunkSize 6 -WithRetranslate -MaxRounds 2`
 
 Note: bulk script now auto-targets videos with broken subtitle timing (extreme duration) for repair, not only missing subtitles.
 
