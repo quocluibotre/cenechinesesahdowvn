@@ -763,32 +763,34 @@ function inferTrackFromPreferredLang(preferredLang) {
     return '';
 }
 
-async function resolveVideoLanguageTrack(apiBase, headers, videoId, youtubeId = '') {
+async function findVideoRowForImport(apiBase, headers, videoId, youtubeId = '') {
     const numericVideoId = Number(videoId);
-    if (!Number.isFinite(numericVideoId) || numericVideoId <= 0) {
-        return '';
-    }
-
     const safeYoutubeId = String(youtubeId || '').trim();
 
-    const normalizeRowTrack = (row) => normalizeLanguageTrack(row?.language_track, '');
+    if (!Number.isFinite(numericVideoId) || numericVideoId <= 0) {
+        if (!safeYoutubeId) {
+            return null;
+        }
+    }
 
     // 1) Direct detail endpoint (fast path).
-    try {
-        const response = await axios.get(`${apiBase}/product/${numericVideoId}`, {
-            headers,
-            timeout: 30000,
-        });
+    if (Number.isFinite(numericVideoId) && numericVideoId > 0) {
+        try {
+            const response = await axios.get(`${apiBase}/product/${numericVideoId}`, {
+                headers,
+                timeout: 30000,
+            });
 
-        const payload = response.data?.data || response.data || {};
-        const detailTrack = normalizeRowTrack(payload);
-        if (detailTrack) {
-            return detailTrack;
-        }
-    } catch (error) {
-        const status = Number(error?.response?.status || 0);
-        if (status && status !== 404) {
-            console.warn(`[import] cannot infer language_track via /product/${numericVideoId}: ${error.message}`);
+            const payload = response.data?.data || response.data || {};
+            const detailId = Number(payload?.id);
+            if (Number.isFinite(detailId) && detailId > 0) {
+                return payload;
+            }
+        } catch (error) {
+            const status = Number(error?.response?.status || 0);
+            if (status && status !== 404) {
+                console.warn(`[import] cannot resolve video via /product/${numericVideoId}: ${error.message}`);
+            }
         }
     }
 
@@ -811,18 +813,16 @@ async function resolveVideoLanguageTrack(apiBase, headers, videoId, youtubeId = 
                 break;
             }
 
-            const byId = rows.find((row) => Number(row?.id) === numericVideoId);
+            const byId = Number.isFinite(numericVideoId) && numericVideoId > 0
+                ? rows.find((row) => Number(row?.id) === numericVideoId)
+                : null;
             const byYoutube = safeYoutubeId
                 ? rows.find((row) => String(row?.video_url || '').includes(safeYoutubeId))
                 : null;
             const matched = byId || byYoutube;
 
             if (matched) {
-                const matchedTrack = normalizeRowTrack(matched);
-                if (matchedTrack) {
-                    return matchedTrack;
-                }
-                break;
+                return matched;
             }
 
             const totalPages = Number(
@@ -834,9 +834,37 @@ async function resolveVideoLanguageTrack(apiBase, headers, videoId, youtubeId = 
                 break;
             }
         } catch (error) {
-            console.warn(`[import] cannot infer language_track via /product list page=${page}: ${error.message}`);
+            console.warn(`[import] cannot resolve video via /product list page=${page}: ${error.message}`);
             break;
         }
+    }
+
+    return null;
+}
+
+function resolveVideoIdFromApiRow(row, fallbackVideoId = 0) {
+    const fromRow = Number(row?.id);
+    if (Number.isFinite(fromRow) && fromRow > 0) {
+        return fromRow;
+    }
+
+    const fallback = Number(fallbackVideoId);
+    if (Number.isFinite(fallback) && fallback > 0) {
+        return fallback;
+    }
+
+    return 0;
+}
+
+function resolveVideoLanguageTrackFromApiRow(row) {
+    return normalizeLanguageTrack(row?.language_track, '');
+}
+
+async function resolveVideoLanguageTrack(apiBase, headers, videoId, youtubeId = '', preloadedRow = null) {
+    const sourceRow = preloadedRow || await findVideoRowForImport(apiBase, headers, videoId, youtubeId);
+    const fromRow = resolveVideoLanguageTrackFromApiRow(sourceRow);
+    if (fromRow) {
+        return fromRow;
     }
 
     return '';
@@ -986,9 +1014,26 @@ async function main() {
 
     const headers = buildHeaders(token);
 
+    const resolvedVideoRow = await findVideoRowForImport(apiBase, headers, videoId, youtubeId);
+    const effectiveVideoId = resolveVideoIdFromApiRow(resolvedVideoRow, videoId);
+
+    if (effectiveVideoId <= 0) {
+        throw new Error('Khong xac dinh duoc video_id hop le tren server de import subtitles');
+    }
+
+    if (effectiveVideoId !== videoId) {
+        console.log(`[import] remap video_id ${videoId} -> ${effectiveVideoId} by youtube_id=${youtubeId}`);
+    }
+
     let effectiveLanguageTrack = requestedLanguageTrack;
     if (!effectiveLanguageTrack) {
-        effectiveLanguageTrack = await resolveVideoLanguageTrack(apiBase, headers, videoId, youtubeId);
+        effectiveLanguageTrack = await resolveVideoLanguageTrack(
+            apiBase,
+            headers,
+            effectiveVideoId,
+            youtubeId,
+            resolvedVideoRow
+        );
     }
 
     if (!effectiveLanguageTrack) {
@@ -1038,7 +1083,7 @@ async function main() {
     }
 
     const importPayloadChunks = buildImportPayloadChunks({
-        videoId,
+        videoId: effectiveVideoId,
         youtubeId,
         subtitles: importSubtitles,
         replaceExisting: true,
@@ -1055,7 +1100,7 @@ async function main() {
 
     let importedTotal = 0;
     let untranslatedTotal = 0;
-    let resolvedVideoId = videoId;
+    let resolvedVideoId = effectiveVideoId;
 
     for (let i = 0; i < importPayloadChunks.length; i += 1) {
         const payload = importPayloadChunks[i];
@@ -1083,7 +1128,7 @@ async function main() {
     );
 
     if (shouldRetranslate) {
-        const totalUpdated = await callRetranslateUntilDone(apiBase, headers, videoId, maxRounds);
+        const totalUpdated = await callRetranslateUntilDone(apiBase, headers, resolvedVideoId, maxRounds);
         console.log(`[retranslate] done total_updated=${totalUpdated}`);
     } else {
         console.log('[retranslate] skipped');

@@ -1409,19 +1409,20 @@ exports.importSubtitles = async (req, res) => {
         const { video_id, db_video_id, youtube_id, subtitles, replace_existing } = req.body || {};
 
         const numericVideoId = Number(video_id);
-        let resolvedVideoId = Number.isFinite(numericVideoId) && numericVideoId > 0
+        const seedVideoId = Number.isFinite(numericVideoId) && numericVideoId > 0
             ? numericVideoId
-            : null;
-
-        if (!resolvedVideoId) {
-            resolvedVideoId = await resolveVideoIdForSubtitles(db_video_id, youtube_id);
-        }
+            : db_video_id;
+        const resolvedVideoId = await resolveVideoIdForSubtitles(seedVideoId, youtube_id);
 
         if (!resolvedVideoId) {
             return res.status(404).json({
                 success: false,
                 message: 'Khong tim thay video trong DB. Can video_id hoac cap (db_video_id + youtube_id) hop le.',
             });
+        }
+
+        if (Number.isFinite(numericVideoId) && numericVideoId > 0 && Number(resolvedVideoId) !== Number(numericVideoId)) {
+            console.warn(`[YouTube] importSubtitles remap video_id=${numericVideoId} -> ${resolvedVideoId} theo youtube_id=${youtube_id}`);
         }
 
         if (!Array.isArray(subtitles) || subtitles.length === 0) {
@@ -1471,6 +1472,20 @@ exports.importSubtitles = async (req, res) => {
         });
     } catch (err) {
         console.error(err);
+
+        const safeCode = String(err?.code || '').toUpperCase();
+        const safeMessage = String(err?.message || '');
+        const isForeignKeyError = safeCode === '23503'
+            || safeCode === 'ER_NO_REFERENCED_ROW_2'
+            || /foreign key constraint|cannot add or update a child row/i.test(safeMessage);
+
+        if (isForeignKeyError) {
+            return res.status(404).json({
+                success: false,
+                message: 'Khong tim thay video_id hop le trong DB de import subtitles. Hay kiem tra video_id/youtube_id.',
+            });
+        }
+
         return res.status(500).json({ success: false, message: err.message });
     }
 };
