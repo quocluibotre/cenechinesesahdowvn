@@ -193,6 +193,156 @@ function normalizeTranslatedText(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function parseFastTranslateResponse(payload) {
+    if (!Array.isArray(payload) || !Array.isArray(payload[0])) {
+        return '';
+    }
+
+    const segments = payload[0]
+        .filter((part) => Array.isArray(part) && typeof part[0] === 'string')
+        .map((part) => part[0]);
+
+    return segments.join('').trim();
+}
+
+function isLikelyBrokenLocalTranslation(sourceText, translatedText) {
+    const source = normalizeTranslatedText(sourceText);
+    const target = normalizeTranslatedText(translatedText);
+
+    if (!target) {
+        return true;
+    }
+
+    if (source && target === source) {
+        return true;
+    }
+
+    if (target.length > 24 && /\b(input|data|json|translations?)\b/i.test(target)) {
+        return true;
+    }
+
+    if (/[{}\[\]]/.test(target) && target.length > 20) {
+        return true;
+    }
+
+    const cjkMatches = target.match(/[\u3400-\u9FFF\uF900-\uFAFF]/g) || [];
+    if (!cjkMatches.length) {
+        return false;
+    }
+
+    const compactLength = target.replace(/\s+/g, '').length || 1;
+    const cjkRatio = cjkMatches.length / compactLength;
+    return cjkMatches.length >= 6 || (cjkMatches.length >= 2 && cjkRatio >= 0.08);
+}
+
+async function translateTextFastFallback(text, timeoutMs, attempt = 1) {
+    const sourceText = String(text || '').trim();
+    if (!sourceText) {
+        return '';
+    }
+
+    try {
+        const response = await axios.get('https://translate.googleapis.com/translate_a/single', {
+            params: {
+                client: 'gtx',
+                sl: 'auto',
+                tl: 'vi',
+                dt: 't',
+                q: sourceText,
+            },
+            timeout: timeoutMs,
+        });
+
+        const translatedText = parseFastTranslateResponse(response.data);
+        if (!translatedText) {
+            throw new Error('Empty translation payload');
+        }
+
+        return translatedText;
+    } catch (error) {
+        if (attempt >= 3) {
+            return '';
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 300 * attempt));
+        return translateTextFastFallback(sourceText, timeoutMs, attempt + 1);
+    }
+}
+
+async function repairSuspiciousTranslations(items, config) {
+    const source = Array.isArray(items) ? items : [];
+    const shouldRepair = normalizeBooleanInput(
+        config?.repairMixedLanguage ?? process.env.LOCAL_AI_REPAIR_MIXED_TRANSLATION,
+        true
+    );
+
+    if (!shouldRepair || !source.length) {
+        return {
+            items: source,
+            checked: 0,
+            fixed: 0,
+        };
+    }
+
+    const timeoutMs = normalizeLimitedNumber(
+        config?.repairFallbackTimeoutMs ?? process.env.LOCAL_AI_REPAIR_TIMEOUT_MS,
+        3000,
+        60000,
+        12000
+    );
+    const maxRepairLines = normalizeLimitedNumber(
+        config?.repairMaxLines ?? process.env.LOCAL_AI_REPAIR_MAX_LINES,
+        1,
+        500,
+        200
+    );
+
+    const suspiciousIndexes = [];
+    for (let i = 0; i < source.length; i += 1) {
+        if (isLikelyBrokenLocalTranslation(source[i]?.en_text, source[i]?.vn_text)) {
+            suspiciousIndexes.push(i);
+        }
+    }
+
+    if (!suspiciousIndexes.length) {
+        return {
+            items: source,
+            checked: 0,
+            fixed: 0,
+        };
+    }
+
+    const selectedIndexes = suspiciousIndexes.slice(0, maxRepairLines);
+    const output = [...source];
+    let fixed = 0;
+
+    for (const index of selectedIndexes) {
+        const enText = String(output[index]?.en_text || '').trim();
+        if (!enText) {
+            continue;
+        }
+
+        const repairedText = normalizeTranslatedText(
+            await translateTextFastFallback(enText, timeoutMs)
+        );
+        if (!repairedText) {
+            continue;
+        }
+
+        output[index] = {
+            ...output[index],
+            vn_text: repairedText,
+        };
+        fixed += 1;
+    }
+
+    return {
+        items: output,
+        checked: selectedIndexes.length,
+        fixed,
+    };
+}
+
 function normalizeBooleanInput(value, fallback = false) {
     if (typeof value === 'boolean') {
         return value;
@@ -585,6 +735,8 @@ async function translateChunkWithOllama(chunk, config) {
     const prompt = [
         'Translate each source subtitle (Chinese or English) to natural Vietnamese for movie subtitles.',
         'Keep meaning accurate, concise, and fluent for spoken dialogue.',
+        'Output must be Vietnamese only (except unavoidable proper names). Do not keep Chinese source words.',
+        'Do not include explanations, notes, or instruction text in any translation line.',
         globalContextHint ? `Global context from full script: ${globalContextHint}` : '',
         buildPronounInstruction(pronounStyle, styleHint),
         'Prefer meaning-equivalent translation over literal word-by-word translation.',
@@ -718,13 +870,22 @@ async function translateSubtitlesWithOllama(subtitles, config) {
         const chunk = chunks[i];
         try {
             const translated = await translateChunkWithFallback(chunk, runtimeConfig);
-            output.push(...translated);
-            const translatedCount = translated.filter((item) => normalizeTranslatedText(item.vn_text)).length;
+            const repairResult = await repairSuspiciousTranslations(translated, runtimeConfig);
+            const repairedChunk = repairResult.items;
 
-            if (translatedCount === translated.length) {
-                console.log(`[local-ai] chunk ${i + 1}/${chunks.length} translated (${translated.length} lines)`);
+            output.push(...repairedChunk);
+            const translatedCount = repairedChunk.filter((item) => normalizeTranslatedText(item.vn_text)).length;
+
+            if (repairResult.checked > 0) {
+                console.warn(
+                    `[local-ai] chunk ${i + 1}/${chunks.length} repaired ${repairResult.fixed}/${repairResult.checked} suspicious lines`
+                );
+            }
+
+            if (translatedCount === repairedChunk.length) {
+                console.log(`[local-ai] chunk ${i + 1}/${chunks.length} translated (${repairedChunk.length} lines)`);
             } else {
-                console.warn(`[local-ai] chunk ${i + 1}/${chunks.length} partial (${translatedCount}/${translated.length} lines)`);
+                console.warn(`[local-ai] chunk ${i + 1}/${chunks.length} partial (${translatedCount}/${repairedChunk.length} lines)`);
             }
         } catch (error) {
             console.warn(`[local-ai] chunk ${i + 1}/${chunks.length} failed: ${error.message}`);
@@ -979,6 +1140,10 @@ async function main() {
         args['global-context'] ?? process.env.LOCAL_AI_GLOBAL_CONTEXT,
         false
     );
+    const repairMixedLanguage = normalizeBooleanInput(
+        args['repair-mixed'] ?? process.env.LOCAL_AI_REPAIR_MIXED_TRANSLATION,
+        true
+    );
     const contextWindowLines = normalizeLimitedNumber(
         args['context-window-lines'] || process.env.LOCAL_AI_CONTEXT_WINDOW_LINES,
         20,
@@ -1074,6 +1239,7 @@ async function main() {
             hasExplicitPronounStyle,
             styleHint,
             useGlobalContext,
+            repairMixedLanguage,
             contextWindowLines,
             contextMaxChars,
         });

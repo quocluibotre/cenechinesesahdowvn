@@ -37,3 +37,4 @@ Ghi chu:
 - PronounStyle ho tro: natural | formal | intimate.
 - GlobalContext: cho local AI doc toan bo script theo cua so (window) truoc khi dich tung chunk, de giu xung ho nhat quan hon.
 - Script import se uu tien ngon ngu subtitle theo language_track cua video (chinese -> zh, english -> en). Co the override bang --language-track chinese|english hoac --lang <ma-ngon-ngu>.
+- Local AI import mac dinh tu sua cac dong dich loi (lan chu Trung/ro prompt) bang fast fallback. Co the tat bang --repair-mixed false.
