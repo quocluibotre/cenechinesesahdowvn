@@ -198,32 +198,32 @@ const Login = () => {
   }, []);
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 sm:p-6">
+    <div className="min-h-screen flex items-center justify-center p-3 sm:p-6">
       <div className="absolute top-16 left-[-4rem] w-44 h-44 bg-blue-300/40 blur-3xl rounded-full pointer-events-none" />
       <div className="absolute bottom-8 right-[-5rem] w-56 h-56 bg-cyan-300/35 blur-3xl rounded-full pointer-events-none" />
 
       <div className="w-full max-w-lg animate-glass-rise">
-        <div className="text-center mb-7">
+        <div className="text-center mb-6 sm:mb-7">
           <Link to="/home" className="inline-flex items-center gap-2">
-            <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg shadow-blue-600/30">
-              <span className="material-symbols-outlined text-2xl">movie_edit</span>
+            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center text-white bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg shadow-blue-600/30">
+              <span className="material-symbols-outlined text-xl sm:text-2xl">movie_edit</span>
             </div>
           </Link>
-          <h1 className="text-3xl font-bold text-blue-950 mt-4">Chào mừng trở lại</h1>
-          <p className="text-glass-subtle mt-1">Đăng nhập để tiếp tục hành trình học tiếng Trung</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-blue-950 mt-3 sm:mt-4">Chào mừng trở lại</h1>
+          <p className="text-sm sm:text-base text-glass-subtle mt-1">Đăng nhập để tiếp tục hành trình học tiếng Trung</p>
         </div>
 
-        <div className="glass-surface-strong rounded-[30px] border border-white/70 p-5 sm:p-8">
-          <div className="glass-surface rounded-2xl p-1.5 mb-7 border border-white/70 flex">
+        <div className="glass-surface-strong rounded-[24px] sm:rounded-[30px] border border-white/70 p-4 sm:p-8">
+          <div className="glass-surface rounded-2xl p-1.5 mb-5 sm:mb-7 border border-white/70 flex">
             <button
-              className={`flex-1 py-2.5 text-sm font-semibold transition glass-tab ${activeTab === 'login' ? 'glass-tab-active' : ''}`}
+              className={`flex-1 py-2 text-sm font-semibold transition glass-tab ${activeTab === 'login' ? 'glass-tab-active' : ''}`}
               onClick={() => { switchAuthTab('login'); }}
               disabled={loading || isTabSwitching}
             >
               Đăng nhập
             </button>
             <button
-              className={`flex-1 py-2.5 text-sm font-semibold transition glass-tab ${activeTab === 'register' ? 'glass-tab-active' : ''}`}
+              className={`flex-1 py-2 text-sm font-semibold transition glass-tab ${activeTab === 'register' ? 'glass-tab-active' : ''}`}
               onClick={() => { switchAuthTab('register'); }}
               disabled={loading || isTabSwitching}
             >
@@ -276,7 +276,7 @@ const Login = () => {
                 </button>
               </div>
 
-              <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center justify-between text-xs sm:text-sm gap-2">
                 <label className="flex items-center gap-2 cursor-pointer text-glass-subtle">
                   <input type="checkbox" name="remember" className="rounded border-white/70 text-blue-600 focus:ring-blue-300" />
                   Ghi nhớ đăng nhập
@@ -284,7 +284,7 @@ const Login = () => {
                 <a href="#" className="text-blue-600 hover:underline">Quên mật khẩu?</a>
               </div>
 
-              <button type="submit" disabled={loading} className="w-full py-3 glass-btn glass-btn-primary font-semibold flex items-center justify-center gap-2 disabled:opacity-70">
+              <button type="submit" disabled={loading} className="w-full py-3 glass-btn glass-btn-primary font-semibold flex items-center justify-center gap-2 disabled:opacity-70 text-sm sm:text-base">
                 <span className="material-symbols-outlined text-lg">login</span>
                 {loading ? 'Đang xử lý...' : 'Đăng nhập'}
               </button>
@@ -366,7 +366,7 @@ const Login = () => {
                 </span>
               </label>
 
-              <button type="submit" disabled={loading} className="w-full py-3 glass-btn glass-btn-primary font-semibold flex items-center justify-center gap-2 disabled:opacity-70">
+              <button type="submit" disabled={loading} className="w-full py-3 glass-btn glass-btn-primary font-semibold flex items-center justify-center gap-2 disabled:opacity-70 text-sm sm:text-base">
                 <span className="material-symbols-outlined text-lg">person_add</span>
                 {loading ? 'Đang xử lý...' : 'Tạo tài khoản'}
               </button>

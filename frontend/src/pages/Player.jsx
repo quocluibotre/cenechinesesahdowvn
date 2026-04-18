@@ -1721,16 +1721,16 @@ const Player = () => {
   const currentTrack = normalizeTrackValue(videoData.language_track, 'chinese');
 
   return (
-    <div className="min-h-screen pb-10 text-glass-main relative">
+    <div className="min-h-screen pb-8 sm:pb-10 text-glass-main relative">
       <div className="absolute top-24 left-[-4rem] w-44 h-44 bg-blue-300/35 blur-3xl rounded-full pointer-events-none" />
       <div className="absolute bottom-8 right-[-4rem] w-52 h-52 bg-cyan-300/35 blur-3xl rounded-full pointer-events-none" />
 
-      <header className="sticky top-3 z-40 px-3 sm:px-4">
-        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 flex flex-wrap items-center gap-2 sm:gap-3 glass-surface rounded-2xl border border-white/70">
-          <Link to="/library" className="order-1 glass-chip px-3 py-1.5 text-blue-700 font-semibold text-sm">← Thư viện</Link>
+      <header className="sticky top-2 sm:top-3 z-40 px-3 sm:px-4">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2.5 sm:py-3 flex flex-wrap items-center gap-2 sm:gap-3 glass-surface rounded-2xl border border-white/70">
+          <Link to="/library" className="order-1 glass-chip px-2.5 sm:px-3 py-1.5 text-blue-700 font-semibold text-xs sm:text-sm">← Thư viện</Link>
           <div className="order-3 w-full text-center min-w-0 sm:order-2 sm:flex-1">
-            <h1 className="font-bold text-blue-950 truncate">{videoData.title}</h1>
-            <p className="text-sm text-glass-subtle truncate">{videoData.title_cn || ''}</p>
+            <h1 className="font-bold text-sm sm:text-base text-blue-950 truncate">{videoData.title}</h1>
+            <p className="text-xs sm:text-sm text-glass-subtle truncate">{videoData.title_cn || ''}</p>
             <span className="inline-flex mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-white/75 text-blue-800">
               {currentTrack === 'english' ? 'Lộ trình tiếng Anh' : 'Lộ trình tiếng Trung'}
             </span>
@@ -1761,11 +1761,11 @@ const Player = () => {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-3 sm:px-4 pt-4 sm:pt-6 grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6">
+      <main className="max-w-7xl mx-auto px-3 sm:px-4 pt-3 sm:pt-6 grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6">
         <section className="xl:col-span-2 space-y-4">
           <div 
             ref={playerContainerRef}
-            className="rounded-2xl overflow-hidden bg-black relative shadow-lg group aspect-video"
+            className="rounded-xl sm:rounded-2xl overflow-hidden bg-black relative shadow-lg group aspect-video"
             onMouseEnter={() => setShowControls(true)}
             onMouseLeave={() => isPlaying && setShowControls(false)}
             onTouchStart={() => setShowControls(true)}
@@ -1807,89 +1807,97 @@ const Player = () => {
             )}
 
             {/* Overlay phụ đề 2 dòng chung */}
-            <div className={`absolute bottom-4 md:bottom-8 left-0 right-0 px-4 pb-4 pt-8 pointer-events-none text-center z-20 transition-opacity duration-300 ${(!showControls && isPlaying) ? 'opacity-100' : ''}`}>
+            <div className={`absolute bottom-2 sm:bottom-4 md:bottom-8 left-0 right-0 px-2.5 sm:px-4 pb-2 sm:pb-4 pt-6 sm:pt-8 pointer-events-none text-center z-20 transition-opacity duration-300 ${(!showControls && isPlaying) ? 'opacity-100' : ''}`}>
               {showCn && currentCnSubtitle && (
-                <div className="inline-block max-w-[94%] text-white font-bold text-base sm:text-lg md:text-xl lg:text-2xl leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)] mb-1">
+                <div className="inline-block max-w-[96%] sm:max-w-[94%] text-white font-bold text-sm min-[420px]:text-base sm:text-lg md:text-xl lg:text-2xl leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)] mb-1">
                   {extractYouTubeId(videoData.video_url) && currentCnSubtitle.words ? (
                      <WordHighlight text={currentCnSubtitle.text} words={currentCnSubtitle.words} currentTime={currentTime} />
                   ) : sanitizeSubtitleText(currentCnSubtitle.text)}
                 </div>
               )}
               {showVi && currentViSubtitle && (
-                <div className="block w-full max-w-[94%] mx-auto text-[#f1c40f] font-semibold text-xs sm:text-sm md:text-base mt-1 leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)]">
+                <div className="block w-full max-w-[96%] sm:max-w-[94%] mx-auto text-[#f1c40f] font-semibold text-[11px] min-[420px]:text-xs sm:text-sm md:text-base mt-1 leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)]">
                   {sanitizeSubtitleText(currentViSubtitle.text, 170)}
                 </div>
               )}
               {showPinyin && currentPinyinSubtitle && (
-                  <div className="block w-full max-w-[94%] mx-auto text-blue-200 font-medium text-[11px] sm:text-xs md:text-sm mt-1 leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)]">{sanitizeSubtitleText(currentPinyinSubtitle.text, 170)}</div>
+                  <div className="block w-full max-w-[96%] sm:max-w-[94%] mx-auto text-blue-200 font-medium text-[10px] min-[420px]:text-[11px] sm:text-xs md:text-sm mt-1 leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)]">{sanitizeSubtitleText(currentPinyinSubtitle.text, 170)}</div>
               )}
             </div>
 
             {/* Custom Control Bar */}
-            <div className={`absolute bottom-0 left-0 right-0 p-3 pt-12 bg-gradient-to-t from-black/90 to-transparent z-30 transition-opacity duration-300 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-               <div className="flex items-center gap-4 text-white px-2">
-                 <button onClick={() => stepMediaBy(-10)} className="hover:text-blue-400 transition" title="Lùi 10 giây">
-                   <span className="material-symbols-outlined text-3xl">replay_10</span>
-                 </button>
-                 <button onClick={togglePlay} className="hover:text-blue-400 transition">
-                   <span className="material-symbols-outlined text-3xl">{isPlaying ? 'pause' : 'play_arrow'}</span>
-                 </button>
-                 <button onClick={() => stepMediaBy(10)} className="hover:text-blue-400 transition" title="Tiến 10 giây">
-                   <span className="material-symbols-outlined text-3xl">forward_10</span>
-                 </button>
-                 <div className="flex-1 h-1.5 bg-white/30 rounded-full cursor-pointer relative group/progress" onClick={(e) => {
-                     const rect = e.currentTarget.getBoundingClientRect();
-                     const percent = (e.clientX - rect.left) / rect.width;
-                     const newTime = percent * duration;
-                    seekMediaTo(newTime);
-                 }}>
-                    <div className="absolute top-0 left-0 h-full bg-[#ff0000] rounded-full relative" style={{ width: `${(currentTime/duration)*100 || 0}%` }}>
-                        <div className="absolute right-0 top-1/2 -mt-1.5 w-3 h-3 bg-white rounded-full shadow opacity-0 group-hover/progress:opacity-100 transform translate-x-1/2"></div>
-                    </div>
-                 </div>
-                 <div className="text-sm font-medium tabular-nums">{toDuration(currentTime)} / {toDuration(duration)}</div>
-                 <div className="flex items-center gap-2 min-w-[94px] sm:min-w-[140px]">
-                   <button onClick={toggleMute} className="hover:text-blue-400 transition" title={isMuted ? 'Bật tiếng' : 'Tắt tiếng'}>
-                     <span className="material-symbols-outlined text-2xl">{getVolumeIcon()}</span>
+            <div className={`absolute bottom-0 left-0 right-0 p-2.5 sm:p-3 pt-10 sm:pt-12 bg-gradient-to-t from-black/90 to-transparent z-30 transition-opacity duration-300 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+               <div className="text-white px-1 sm:px-2 space-y-2.5">
+                 <div className="flex items-center justify-center gap-2.5 sm:gap-4">
+                   <button onClick={() => stepMediaBy(-10)} className="hover:text-blue-400 transition" title="Lùi 10 giây">
+                     <span className="material-symbols-outlined text-2xl sm:text-3xl">replay_10</span>
                    </button>
-                   <input
-                     type="range"
-                     min="0"
-                     max="1"
-                     step="0.01"
-                     value={volume}
-                     onChange={(e) => setMediaVolume(Number(e.target.value))}
-                     className="w-14 sm:w-24 accent-blue-500 cursor-pointer"
-                     aria-label="Âm lượng"
-                   />
-                   <span className="hidden sm:inline text-xs text-white/80 tabular-nums w-9 text-right">{Math.round(volume * 100)}%</span>
+                   <button onClick={togglePlay} className="hover:text-blue-400 transition">
+                     <span className="material-symbols-outlined text-2xl sm:text-3xl">{isPlaying ? 'pause' : 'play_arrow'}</span>
+                   </button>
+                   <button onClick={() => stepMediaBy(10)} className="hover:text-blue-400 transition" title="Tiến 10 giây">
+                     <span className="material-symbols-outlined text-2xl sm:text-3xl">forward_10</span>
+                   </button>
                  </div>
-                 <button onClick={toggleFullscreen} className="hover:text-blue-400 transition">
-                   <span className="material-symbols-outlined text-2xl">{!document.fullscreenElement?'fullscreen':'fullscreen_exit'}</span>
-                 </button>
+
+                 <div className="flex items-center gap-2 sm:gap-3">
+                   <div className="flex-1 h-1.5 bg-white/30 rounded-full cursor-pointer relative group/progress" onClick={(e) => {
+                       const rect = e.currentTarget.getBoundingClientRect();
+                       const percent = (e.clientX - rect.left) / rect.width;
+                       const newTime = percent * duration;
+                      seekMediaTo(newTime);
+                   }}>
+                      <div className="absolute top-0 left-0 h-full bg-[#ff0000] rounded-full relative" style={{ width: `${(currentTime/duration)*100 || 0}%` }}>
+                          <div className="absolute right-0 top-1/2 -mt-1.5 w-3 h-3 bg-white rounded-full shadow opacity-0 group-hover/progress:opacity-100 transform translate-x-1/2"></div>
+                      </div>
+                   </div>
+
+                   <div className="text-[11px] sm:text-sm font-medium tabular-nums whitespace-nowrap">{toDuration(currentTime)} / {toDuration(duration)}</div>
+
+                   <div className="flex items-center justify-end gap-1.5 min-w-[68px] sm:min-w-[140px]">
+                     <button onClick={toggleMute} className="hover:text-blue-400 transition" title={isMuted ? 'Bật tiếng' : 'Tắt tiếng'}>
+                       <span className="material-symbols-outlined text-xl sm:text-2xl">{getVolumeIcon()}</span>
+                     </button>
+                     <input
+                       type="range"
+                       min="0"
+                       max="1"
+                       step="0.01"
+                       value={volume}
+                       onChange={(e) => setMediaVolume(Number(e.target.value))}
+                       className="hidden sm:block w-24 accent-blue-500 cursor-pointer"
+                       aria-label="Âm lượng"
+                     />
+                     <span className="hidden sm:inline text-xs text-white/80 tabular-nums w-9 text-right">{Math.round(volume * 100)}%</span>
+                   </div>
+
+                   <button onClick={toggleFullscreen} className="hover:text-blue-400 transition">
+                     <span className="material-symbols-outlined text-xl sm:text-2xl">{!document.fullscreenElement?'fullscreen':'fullscreen_exit'}</span>
+                   </button>
+                 </div>
                </div>
             </div>
           </div>
 
-          <div className="glass-surface rounded-2xl p-4 border border-white/70">
+          <div className="glass-surface rounded-2xl p-3 sm:p-4 border border-white/70">
             <div className="flex flex-wrap gap-2 items-center">
-              <button onClick={() => setShowCn((v) => !v)} className={`px-3 py-1.5 rounded-lg text-sm border transition ${showCn ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>{currentTrack === 'english' ? 'EN' : 'CN'}</button>
-              <button onClick={() => setShowVi((v) => !v)} className={`px-3 py-1.5 rounded-lg text-sm border transition ${showVi ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>VI</button>
+              <button onClick={() => setShowCn((v) => !v)} className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm border transition ${showCn ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>{currentTrack === 'english' ? 'EN' : 'CN'}</button>
+              <button onClick={() => setShowVi((v) => !v)} className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm border transition ${showVi ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>VI</button>
               {currentTrack === 'chinese' && (
-                <button onClick={() => setShowPinyin((v) => !v)} className={`px-3 py-1.5 rounded-lg text-sm border transition ${showPinyin ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>Pinyin</button>
+                <button onClick={() => setShowPinyin((v) => !v)} className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm border transition ${showPinyin ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>Pinyin</button>
               )}
 
               <div className="h-5 w-px bg-blue-200/60 mx-1" />
 
-              <button onClick={repeatCurrentSentence} className="px-3 py-1.5 rounded-lg text-sm glass-chip">Lặp lại câu hiện tại</button>
-              <button onClick={toggleLoopCurrentSentence} className={`px-3 py-1.5 rounded-lg text-sm border transition ${loopEnabled ? 'glass-chip-active' : 'glass-chip'}`}>
+              <button onClick={repeatCurrentSentence} className="px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm glass-chip">Lặp lại câu hiện tại</button>
+              <button onClick={toggleLoopCurrentSentence} className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm border transition ${loopEnabled ? 'glass-chip-active' : 'glass-chip'}`}>
                 {loopEnabled ? 'Dừng loop câu' : 'Loop câu hiện tại'}
               </button>
               {loopEnabled && loopRange && (
                 <span className="glass-status glass-status-warning">{toDuration(loopRange.start)} - {toDuration(loopRange.end)}</span>
               )}
 
-              <div className="ml-auto text-xs text-glass-subtle">{toDuration(currentTime)} / {toDuration(duration)}</div>
+              <div className="w-full sm:w-auto sm:ml-auto text-right text-xs text-glass-subtle">{toDuration(currentTime)} / {toDuration(duration)}</div>
             </div>
           </div>
 

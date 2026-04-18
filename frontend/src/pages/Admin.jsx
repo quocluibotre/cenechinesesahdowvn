@@ -823,11 +823,11 @@ const Admin = () => {
   }
 
   return (
-    <div className="min-h-screen text-glass-main pb-8 relative">
+    <div className="min-h-screen text-glass-main pb-6 sm:pb-8 relative">
       <div className="absolute top-24 left-[-5rem] w-52 h-52 bg-blue-300/35 blur-3xl rounded-full pointer-events-none" />
       <div className="absolute bottom-6 right-[-5rem] w-56 h-56 bg-cyan-300/35 blur-3xl rounded-full pointer-events-none" />
 
-      <header className="sticky top-3 z-20 px-3 sm:px-4">
+      <header className="sticky top-2 sm:top-3 z-20 px-3 sm:px-4">
         <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4 flex flex-wrap items-center gap-2 sm:gap-3 glass-surface rounded-2xl border border-white/70">
           <div className="order-1 flex items-center gap-3 min-w-0 flex-1">
             <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center shadow-lg shadow-blue-600/30">
@@ -851,19 +851,19 @@ const Admin = () => {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto p-4 space-y-4">
+      <main className="max-w-7xl mx-auto p-3 sm:p-4 space-y-4">
         {error && (
           <div className="glass-surface rounded-xl border border-rose-200/70 text-rose-700 px-4 py-3 text-sm">
             {error}
           </div>
         )}
 
-        <div className="glass-surface rounded-2xl border border-white/70 p-2 flex flex-wrap gap-2">
+        <div className="glass-surface rounded-2xl border border-white/70 p-2 flex gap-2 overflow-x-auto glass-scroll whitespace-nowrap">
           {adminTabs.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`px-4 py-2 rounded-xl text-sm font-semibold transition inline-flex items-center gap-2 ${activeTab === tab.key ? 'glass-chip-active' : 'glass-chip'}`}
+              className={`shrink-0 px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition inline-flex items-center gap-1.5 sm:gap-2 ${activeTab === tab.key ? 'glass-chip-active' : 'glass-chip'}`}
             >
               <span className="material-symbols-outlined text-base">{tab.icon}</span>
               {tab.label}
@@ -873,7 +873,7 @@ const Admin = () => {
 
         {activeTab === 'dashboard' && (
           <section className="space-y-4">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger-sequence">
+            <div className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 stagger-sequence">
               <div className="stagger-item glass-kpi-card">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm text-glass-subtle">Tổng video</div>
@@ -881,7 +881,7 @@ const Admin = () => {
                     <span className="material-symbols-outlined text-base">movie</span>
                   </span>
                 </div>
-                <div className="text-3xl font-bold text-blue-950 mt-2">{stats?.total_videos ?? '-'}</div>
+                <div className="text-2xl sm:text-3xl font-bold text-blue-950 mt-2">{stats?.total_videos ?? '-'}</div>
                 <div className="text-xs text-glass-subtle mt-1">+{stats?.videos_this_week ?? 0} tuần này</div>
               </div>
               <div className="stagger-item glass-kpi-card">
@@ -891,7 +891,7 @@ const Admin = () => {
                     <span className="material-symbols-outlined text-base">public</span>
                   </span>
                 </div>
-                <div className="text-3xl font-bold text-blue-950 mt-2">{stats?.published_videos ?? '-'}</div>
+                <div className="text-2xl sm:text-3xl font-bold text-blue-950 mt-2">{stats?.published_videos ?? '-'}</div>
                 <div className="text-xs text-glass-subtle mt-1">Sẵn sàng cho học viên</div>
               </div>
               <div className="stagger-item glass-kpi-card">
@@ -901,7 +901,7 @@ const Admin = () => {
                     <span className="material-symbols-outlined text-base">groups</span>
                   </span>
                 </div>
-                <div className="text-3xl font-bold text-blue-950 mt-2">{stats?.total_users ?? '-'}</div>
+                <div className="text-2xl sm:text-3xl font-bold text-blue-950 mt-2">{stats?.total_users ?? '-'}</div>
                 <div className="text-xs text-glass-subtle mt-1">+{stats?.users_today ?? 0} hôm nay</div>
               </div>
               <div className="stagger-item glass-kpi-card">
@@ -911,7 +911,7 @@ const Admin = () => {
                     <span className="material-symbols-outlined text-base">schedule</span>
                   </span>
                 </div>
-                <div className="text-3xl font-bold text-blue-950 mt-2">{stats?.total_watch_hours ?? '-'}h</div>
+                <div className="text-2xl sm:text-3xl font-bold text-blue-950 mt-2">{stats?.total_watch_hours ?? '-'}h</div>
                 <div className="text-xs text-glass-subtle mt-1">Mức tương tác toàn hệ thống</div>
               </div>
             </div>
@@ -1355,29 +1355,29 @@ const Admin = () => {
         )}
 
         {activeTab === 'youtube' && (
-          <section className="glass-surface rounded-2xl border border-white/70 p-6 space-y-5 shadow-inner bg-gradient-to-br from-white/10 to-transparent">
+          <section className="glass-surface rounded-2xl border border-white/70 p-4 sm:p-6 space-y-4 sm:space-y-5 shadow-inner bg-gradient-to-br from-white/10 to-transparent">
             <div className="glass-section-head mb-0">
               <h2 className="glass-section-title">
                  <span className="material-symbols-outlined text-red-500">smart_display</span>
                  Thêm Video Từ YouTube (Tích hợp AI)
               </h2>
             </div>
-            <p className="text-sm text-glass-subtle">Chỉ cần dán link YouTube, hệ thống sẽ tự động bóc tách video, âm thanh, kéo phụ đề và dùng trí tuệ nhân tạo (Gemini) để đồng bộ & dịch song ngữ.</p>
+            <p className="text-xs sm:text-sm text-glass-subtle">Chỉ cần dán link YouTube, hệ thống sẽ tự động bóc tách video, âm thanh, kéo phụ đề và dùng trí tuệ nhân tạo (Gemini) để đồng bộ & dịch song ngữ.</p>
             
             <div className="flex flex-col md:flex-row gap-4">
                <input 
-                 className="glass-input flex-1 px-4 py-3 rounded-xl border border-white/30 text-lg shadow-sm" 
+                 className="glass-input flex-1 px-4 py-3 rounded-xl border border-white/30 text-sm sm:text-lg shadow-sm" 
                  placeholder="Dán link YouTube (VD: https://www.youtube.com/watch?v=...)" 
                  value={ytUrl} 
                  onChange={(e) => setYtUrl(e.target.value)} 
                />
             </div>
 
-            <div className="flex flex-wrap items-center gap-4">
+            <div className="grid grid-cols-1 min-[520px]:grid-cols-2 gap-3 sm:gap-4">
               <button 
                 disabled={isYtProcessing} 
                 onClick={() => processYoutube('chinese')} 
-                className="px-6 py-3 rounded-xl glass-btn glass-btn-primary font-bold disabled:opacity-50 text-white bg-red-600/80 hover:bg-red-600/100 border border-red-500/50 shadow-[0_0_15px_rgba(220,38,38,0.3)] transition-all"
+                className="w-full px-4 sm:px-6 py-3 rounded-xl glass-btn glass-btn-primary font-bold disabled:opacity-50 text-white bg-red-600/80 hover:bg-red-600/100 border border-red-500/50 shadow-[0_0_15px_rgba(220,38,38,0.3)] transition-all text-sm sm:text-base"
               >
                 {isYtProcessing ? 'Đang xử lý...' : 'Tải Lên Video Trung (Chinese)'}
               </button>
@@ -1385,7 +1385,7 @@ const Admin = () => {
               <button 
                 disabled={isYtProcessing} 
                 onClick={() => processYoutube('english')} 
-                className="px-6 py-3 rounded-xl glass-btn font-bold disabled:opacity-50 text-blue-900 bg-blue-400/80 hover:bg-blue-400/100 border border-blue-400/70 shadow-[0_0_15px_rgba(96,165,250,0.3)] transition-all"
+                className="w-full px-4 sm:px-6 py-3 rounded-xl glass-btn font-bold disabled:opacity-50 text-blue-900 bg-blue-400/80 hover:bg-blue-400/100 border border-blue-400/70 shadow-[0_0_15px_rgba(96,165,250,0.3)] transition-all text-sm sm:text-base"
               >
                 {isYtProcessing ? 'Đang xử lý...' : 'Tải Lên Video English (Anh)'}
               </button>
@@ -1411,7 +1411,7 @@ const Admin = () => {
               </div>
               <p className="text-xs text-glass-subtle">Chọn video đã upload để dịch lại các câu phụ đề còn bị lỗi <strong>(Chưa dịch)</strong> mà không cần cào lại YouTube.</p>
 
-              <div className="flex flex-col md:flex-row gap-3 items-start md:items-center">
+              <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
                 <select
                   className="glass-input flex-1 px-4 py-3 rounded-xl border border-white/30 text-sm shadow-sm"
                   value={ytRetranslateId}
@@ -1427,7 +1427,7 @@ const Admin = () => {
                 <button
                   disabled={isRetranslating || !ytRetranslateId}
                   onClick={retranslateSubtitles}
-                  className="px-6 py-3 rounded-xl glass-btn font-bold disabled:opacity-50 text-amber-900 bg-amber-400/80 hover:bg-amber-500/90 border border-amber-400/70 shadow-[0_0_15px_rgba(251,191,36,0.3)] transition-all whitespace-nowrap"
+                  className="w-full md:w-auto px-6 py-3 rounded-xl glass-btn font-bold disabled:opacity-50 text-amber-900 bg-amber-400/80 hover:bg-amber-500/90 border border-amber-400/70 shadow-[0_0_15px_rgba(251,191,36,0.3)] transition-all whitespace-nowrap"
                 >
                   {isRetranslating ? '⏳ Đang dịch...' : '🔄 Dịch lại ngay'}
                 </button>
