@@ -34,7 +34,12 @@ exports.login = async (req, res) => {
 
         const account = String(email).trim();
         const [users] = await db.promise().query(
-            'SELECT * FROM users WHERE (email = ? OR username = ?) AND is_active = 1 LIMIT 1',
+            `
+            SELECT id, username, full_name, email, avatar_url, role, hsk_level, password_hash
+            FROM users
+            WHERE (email = ? OR username = ?) AND is_active = 1
+            LIMIT 1
+            `,
             [account, account]
         );
 
@@ -91,7 +96,7 @@ exports.getMe = async (req, res) => {
 
         const [rows] = await db.promise().query(
             `
-            SELECT id, username, full_name, email, avatar_url, role, hsk_level, is_active
+            SELECT id, username, full_name, email, avatar_url, role, hsk_level, is_active, email_verified
             FROM users
             WHERE id = ?
             LIMIT 1
@@ -161,14 +166,24 @@ exports.register = async (req, res) => {
             safeHskLevel,
         ]);
 
+        let createdUserId = Number(result?.insertId || 0);
+        if (!createdUserId) {
+            const [createdRows] = await db.promise().query('SELECT id FROM users WHERE email = ? LIMIT 1', [normalizedEmail]);
+            createdUserId = Number(createdRows?.[0]?.id || 0);
+        }
+
+        if (!createdUserId) {
+            return res.status(500).json({ message: 'Khong the tao tai khoan luc nay.' });
+        }
+
         res.status(201).json({
             success: true,
             message: 'Dang ky thanh cong! Vui long dang nhap.',
-            userId: result.insertId,
+            userId: createdUserId,
             username: safeUsername,
             data: {
                 user: {
-                    id: result.insertId,
+                    id: createdUserId,
                     username: safeUsername,
                     email: normalizedEmail,
                     full_name: String(full_name).trim(),

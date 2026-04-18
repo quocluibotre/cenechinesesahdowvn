@@ -34,7 +34,7 @@ const Login = () => {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showPasswordConfirm, setShowPasswordConfirm] = useState(false);
-  const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -49,6 +49,15 @@ const Login = () => {
     }
     return raw;
   }, [location.search]);
+
+  const showNotice = (text, type = 'error') => {
+    if (!text) {
+      setNotice(null);
+      return;
+    }
+
+    setNotice({ type, text });
+  };
 
   const handleInputChange = (e) => {
     const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
@@ -76,7 +85,7 @@ const Login = () => {
 
     const direction = activeTab === 'login' && nextTab === 'register' ? 'forward' : 'backward';
     if (clearError) {
-      setError(null);
+      setNotice(null);
     }
 
     clearTabAnimationTimers();
@@ -103,7 +112,7 @@ const Login = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setLoading(true);
-    setError(null);
+    setNotice(null);
     try {
       const response = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
@@ -127,10 +136,10 @@ const Login = () => {
         const fallbackPath = resolvedUser?.role === 'admin' ? '/admin' : '/library';
         navigate(redirectPath || fallbackPath, { replace: true });
       } else {
-        setError(data.message || 'Đăng nhập thất bại');
+        showNotice(data.message || 'Dang nhap that bai', 'error');
       }
     } catch (err) {
-      setError('Lỗi kết nối máy chủ!');
+      showNotice('Loi ket noi may chu!', 'error');
     } finally {
       setLoading(false);
     }
@@ -139,16 +148,16 @@ const Login = () => {
   const handleRegisterSubmit = async (e) => {
     e.preventDefault();
     if (formData.password !== formData.passwordConfirm) {
-      setError('Mật khẩu xác nhận không khớp!');
+      showNotice('Mat khau xac nhan khong khop!', 'error');
       return;
     }
     if (!formData.terms) {
-      setError('Vui lòng đồng ý với điều khoản sử dụng!');
+      showNotice('Vui long dong y voi dieu khoan su dung!', 'error');
       return;
     }
     
     setLoading(true);
-    setError(null);
+    setNotice(null);
     try {
       const response = await fetch(`${API_BASE}/auth/register`, {
         method: 'POST',
@@ -164,13 +173,21 @@ const Login = () => {
       const data = await response.json();
       
       if (response.ok) {
+        const registeredEmail = String(formData.email || '').trim().toLowerCase();
         switchAuthTab('login', { clearError: false });
-        setError('Đăng ký thành công! Vui lòng đăng nhập.');
+        setFormData((prev) => ({
+          ...prev,
+          email: registeredEmail,
+          password: '',
+          passwordConfirm: '',
+          terms: false,
+        }));
+        showNotice(data.message || 'Dang ky thanh cong! Vui long dang nhap.', 'success');
       } else {
-        setError(data.message || 'Đăng ký thất bại');
+        showNotice(data.message || 'Dang ky that bai', 'error');
       }
     } catch (err) {
-      setError('Lỗi kết nối máy chủ!');
+      showNotice('Loi ket noi may chu!', 'error');
     } finally {
       setLoading(false);
     }
@@ -214,9 +231,17 @@ const Login = () => {
             </button>
           </div>
 
-          {error && (
-            <div className={`mb-6 p-3 rounded-xl text-sm text-center border ${error.includes('thành công') ? 'bg-emerald-100/70 border-emerald-300/40 text-emerald-700' : 'bg-rose-100/70 border-rose-300/40 text-rose-700'}`}>
-              {error}
+          {notice && (
+            <div
+              className={`mb-6 p-3 rounded-xl text-sm text-center border ${
+                notice.type === 'success'
+                  ? 'bg-emerald-100/70 border-emerald-300/40 text-emerald-700'
+                  : notice.type === 'info'
+                    ? 'bg-blue-100/70 border-blue-300/40 text-blue-700'
+                    : 'bg-rose-100/70 border-rose-300/40 text-rose-700'
+              }`}
+            >
+              {notice.text}
             </div>
           )}
 
