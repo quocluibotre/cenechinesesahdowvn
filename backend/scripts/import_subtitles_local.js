@@ -152,6 +152,66 @@ function normalizeTranslatedText(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function extractTranslationText(entry) {
+    if (typeof entry === 'string') {
+        return normalizeTranslatedText(entry);
+    }
+
+    if (!entry || typeof entry !== 'object') {
+        return '';
+    }
+
+    const candidates = [
+        entry.vn_text,
+        entry.translation,
+        entry.translated_text,
+        entry.text,
+        entry.vi,
+        entry.value,
+    ];
+
+    for (const value of candidates) {
+        if (typeof value === 'string' && value.trim()) {
+            return normalizeTranslatedText(value);
+        }
+    }
+
+    return '';
+}
+
+function extractTranslations(parsed, expectedCount) {
+    let raw = null;
+
+    if (Array.isArray(parsed)) {
+        raw = parsed;
+    } else if (Array.isArray(parsed?.translations)) {
+        raw = parsed.translations;
+    } else if (Array.isArray(parsed?.items)) {
+        raw = parsed.items;
+    } else if (expectedCount === 1) {
+        if (typeof parsed === 'string') {
+            raw = [parsed];
+        } else if (typeof parsed?.translation === 'string') {
+            raw = [parsed.translation];
+        } else if (typeof parsed?.vn_text === 'string') {
+            raw = [parsed.vn_text];
+        } else if (typeof parsed?.text === 'string') {
+            raw = [parsed.text];
+        }
+    }
+
+    if (!Array.isArray(raw) || raw.length !== expectedCount) {
+        return null;
+    }
+
+    const normalized = raw.map((entry) => extractTranslationText(entry));
+    if (normalized.some((value) => !value)) {
+        return null;
+    }
+
+    return normalized;
+}
+
 function chunkArray(source, size) {
     const items = Array.isArray(source) ? source : [];
     const chunkSize = Math.max(1, Number(size || 1));
@@ -194,6 +254,9 @@ async function translateChunkWithOllama(chunk, config) {
             model,
             stream: false,
             format: 'json',
+            options: {
+                temperature: 0,
+            },
             messages: [
                 {
                     role: 'system',
@@ -214,12 +277,7 @@ async function translateChunkWithOllama(chunk, config) {
     const content = response.data?.message?.content || '';
     const parsed = parseJsonLoose(content);
 
-    let translations = null;
-    if (Array.isArray(parsed)) {
-        translations = parsed;
-    } else if (Array.isArray(parsed?.translations)) {
-        translations = parsed.translations;
-    }
+    const translations = extractTranslations(parsed, chunk.length);
 
     if (!Array.isArray(translations) || translations.length !== chunk.length) {
         throw new Error('Ollama output khong dung so luong cau');
@@ -231,6 +289,36 @@ async function translateChunkWithOllama(chunk, config) {
     }));
 }
 
+async function translateChunkWithFallback(chunk, config) {
+    try {
+        return await translateChunkWithOllama(chunk, config);
+    } catch (error) {
+        if (chunk.length <= 1) {
+            throw error;
+        }
+
+        const output = [];
+        let recovered = 0;
+
+        for (const item of chunk) {
+            try {
+                const translatedSingle = await translateChunkWithOllama([item], config);
+                output.push(translatedSingle[0]);
+                recovered += 1;
+            } catch {
+                output.push({ ...item, vn_text: '' });
+            }
+        }
+
+        if (!recovered) {
+            throw error;
+        }
+
+        console.warn(`[local-ai] fallback per-line recovered ${recovered}/${chunk.length} lines`);
+        return output;
+    }
+}
+
 async function translateSubtitlesWithOllama(subtitles, config) {
     const chunkSize = Math.max(4, Math.min(60, Number(config?.chunkSize || 18)));
     const chunks = chunkArray(subtitles, chunkSize);
@@ -239,9 +327,15 @@ async function translateSubtitlesWithOllama(subtitles, config) {
     for (let i = 0; i < chunks.length; i += 1) {
         const chunk = chunks[i];
         try {
-            const translated = await translateChunkWithOllama(chunk, config);
+            const translated = await translateChunkWithFallback(chunk, config);
             output.push(...translated);
-            console.log(`[local-ai] chunk ${i + 1}/${chunks.length} translated (${translated.length} lines)`);
+            const translatedCount = translated.filter((item) => normalizeTranslatedText(item.vn_text)).length;
+
+            if (translatedCount === translated.length) {
+                console.log(`[local-ai] chunk ${i + 1}/${chunks.length} translated (${translated.length} lines)`);
+            } else {
+                console.warn(`[local-ai] chunk ${i + 1}/${chunks.length} partial (${translatedCount}/${translated.length} lines)`);
+            }
         } catch (error) {
             console.warn(`[local-ai] chunk ${i + 1}/${chunks.length} failed: ${error.message}`);
             output.push(...chunk.map((item) => ({ ...item, vn_text: '' })));
