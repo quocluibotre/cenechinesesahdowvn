@@ -376,14 +376,16 @@ async function resolveTranscriptApi() {
     return transcriptApiLoaderPromise;
 }
 
-async function fetchYouTubeTranscriptByLibrary(videoId) {
+async function fetchYouTubeTranscriptByLibrary(videoId, options = {}) {
     const transcriptApi = await resolveTranscriptApi();
 
     if (!transcriptApi || typeof transcriptApi.fetchTranscript !== 'function') {
         throw new Error('Transcript fallback library unavailable');
     }
 
-    const languageCandidates = ['en', 'en-US', 'en-GB', null];
+    const preferredLang = String(options?.preferredLang || '').trim();
+    const languageTrack = normalizeLanguageTrack(options?.languageTrack, 'english');
+    const languageCandidates = buildTranscriptLanguageCandidates(languageTrack, preferredLang);
     const proxyFetch = YOUTUBE_PROXY_SETTINGS ? createAxiosFetchForYouTube() : null;
     let lastError = null;
 
@@ -599,6 +601,71 @@ function normalizeLanguageTrack(value, fallback = 'english') {
     if (['english', 'en', 'eng'].includes(normalized)) return 'english';
     if (['chinese', 'cn', 'zh', 'mandarin'].includes(normalized)) return 'chinese';
     return fallback;
+}
+
+function buildTranscriptLanguageCandidates(languageTrack, preferredLang = '') {
+    const candidates = [];
+    const seen = new Set();
+
+    const addCandidate = (value) => {
+        if (value == null) return;
+
+        const safe = String(value || '').trim();
+        if (!safe) return;
+
+        const key = safe.toLowerCase();
+        if (seen.has(key)) return;
+
+        seen.add(key);
+        candidates.push(safe);
+    };
+
+    addCandidate(preferredLang);
+
+    const normalizedTrack = normalizeLanguageTrack(languageTrack, 'english');
+    if (normalizedTrack === 'chinese') {
+        ['zh-Hans', 'zh-CN', 'zh', 'zh-Hant', 'zh-TW', 'zh-HK', 'cmn-Hans-CN', 'cmn-Hant-TW'].forEach(addCandidate);
+        ['en', 'en-US', 'en-GB'].forEach(addCandidate);
+    } else {
+        ['en', 'en-US', 'en-GB', 'en-CA'].forEach(addCandidate);
+        ['zh-Hans', 'zh-CN', 'zh'].forEach(addCandidate);
+    }
+
+    return [...candidates, null];
+}
+
+function selectCaptionTrack(captionTracks, languageCandidates = []) {
+    const tracks = Array.isArray(captionTracks) ? captionTracks : [];
+    if (!tracks.length) {
+        return null;
+    }
+
+    const normalizedTracks = tracks.map((track) => ({
+        track,
+        languageCode: String(track?.languageCode || '').trim().toLowerCase(),
+    }));
+
+    for (const candidate of languageCandidates) {
+        if (candidate == null) continue;
+
+        const normalizedCandidate = String(candidate || '').trim().toLowerCase();
+        if (!normalizedCandidate) continue;
+
+        const exactMatch = normalizedTracks.find((item) => item.languageCode === normalizedCandidate);
+        if (exactMatch) {
+            return exactMatch.track;
+        }
+
+        const prefixMatch = normalizedTracks.find((item) => (
+            item.languageCode.startsWith(`${normalizedCandidate}-`)
+            || (normalizedCandidate.startsWith('zh') && item.languageCode.startsWith('zh'))
+        ));
+        if (prefixMatch) {
+            return prefixMatch.track;
+        }
+    }
+
+    return null;
 }
 
 function normalizeIdiomRewriteEngine(value) {
@@ -1136,8 +1203,8 @@ async function translateChunkWithGemini(chunk, attempt = 1) {
     const pronounStyle = normalizePronounStyle(TRANSLATE_PRONOUN_STYLE);
     const pronounGuidelines = buildPronounGuidelineLines(pronounStyle, TRANSLATE_STYLE_HINT);
     const prompt = [
-        'You are a professional English-to-Vietnamese subtitle translator.',
-        'Translate the "en_text" field of each object into Vietnamese and add a "vn_text" field.',
+        'You are a professional subtitle translator to Vietnamese.',
+        'Translate the "en_text" field of each object (source text can be Chinese or English) into Vietnamese and add a "vn_text" field.',
         'Keep all other fields unchanged and preserve object order.',
         'Translation constraints:',
         ...pronounGuidelines.map((line) => `- ${line}`),
@@ -1427,6 +1494,33 @@ exports.extractAndTranslateSubtitles = async (req, res) => {
             console.warn(`[YouTube] db_video_id=${db_video_id} khong ton tai, fallback sang video_id=${resolvedVideoId} theo youtube_id=${youtube_id}`);
         }
 
+        const requestedLanguageTrack = normalizeLanguageTrack(req.body?.language_track, '');
+        const requestedSubtitleLang = String(req.body?.subtitle_lang || req.body?.lang || '').trim();
+
+        let videoLanguageTrack = requestedLanguageTrack;
+        if (!videoLanguageTrack) {
+            try {
+                const [videoRows] = await db.promise().query(
+                    'SELECT language_track FROM videos WHERE id = ? LIMIT 1',
+                    [resolvedVideoId]
+                );
+
+                videoLanguageTrack = normalizeLanguageTrack(videoRows?.[0]?.language_track, 'english');
+            } catch (trackError) {
+                videoLanguageTrack = 'english';
+                console.warn(`[YouTube] Khong doc duoc language_track cho video_id=${resolvedVideoId}:`, trackError?.message || trackError);
+            }
+        }
+
+        if (!videoLanguageTrack) {
+            videoLanguageTrack = 'english';
+        }
+
+        const transcriptLanguageCandidates = buildTranscriptLanguageCandidates(videoLanguageTrack, requestedSubtitleLang);
+        console.log(
+            `[YouTube] subtitle source track=${videoLanguageTrack}, preferred_lang=${requestedSubtitleLang || 'auto'}, candidates=${transcriptLanguageCandidates.filter(Boolean).join(',')}`
+        );
+
         const translateEngine = getSubtitleTranslateEngine();
         const translateConfig = ensureTranslateEngineConfigured(translateEngine);
         if (!translateConfig.ok) {
@@ -1470,14 +1564,8 @@ exports.extractAndTranslateSubtitles = async (req, res) => {
 
             console.log('Available tracks:', captionTracks.map(t => t.languageCode));
 
-            // Ưu tiên tìm track tiếng Anh
-            const preferredLangs = ['en', 'en-US', 'en-GB', 'en-CA'];
-            let selectedTrack = null;
-            for (const lang of preferredLangs) {
-                selectedTrack = captionTracks.find(t => t.languageCode === lang);
-                if (selectedTrack) break;
-            }
-            // Fallback: lấy track đầu tiên nếu không tìm được tiếng Anh
+            let selectedTrack = selectCaptionTrack(captionTracks, transcriptLanguageCandidates);
+            // Fallback: lấy track đầu tiên nếu không tìm được track theo ưu tiên.
             if (!selectedTrack) selectedTrack = captionTracks[0];
 
             console.log('Selected track:', selectedTrack.languageCode, selectedTrack.name?.simpleText);
@@ -1552,7 +1640,10 @@ exports.extractAndTranslateSubtitles = async (req, res) => {
             console.warn('InnerTube fetch error:', innerError?.message || innerError);
 
             try {
-                captions = await fetchYouTubeTranscriptByLibrary(youtube_id);
+                captions = await fetchYouTubeTranscriptByLibrary(youtube_id, {
+                    languageTrack: videoLanguageTrack,
+                    preferredLang: requestedSubtitleLang,
+                });
                 console.log(`✅ Fetched ${captions.length} captions via youtube-transcript fallback`);
             } catch (fallbackError) {
                 const innerMessage = String(innerError?.message || '').trim();
@@ -1776,6 +1867,9 @@ exports.getSubtitlesByVideoId = async (req, res) => {
 exports.debugTranscript = async (req, res) => {
     try {
         const { youtubeId } = req.params;
+        const requestedTrack = normalizeLanguageTrack(req.query?.language_track, 'english');
+        const preferredLang = String(req.query?.lang || '').trim();
+        const languageCandidates = buildTranscriptLanguageCandidates(requestedTrack, preferredLang);
         const INNERTUBE_URL = 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
         const CLIENT_VERSION = '20.10.38';
         const USER_AGENT = `com.google.android.youtube/${CLIENT_VERSION} (Linux; U; Android 14)`;
@@ -1791,14 +1885,16 @@ exports.debugTranscript = async (req, res) => {
             return res.json({ success: false, message: 'Không có caption tracks', data: null });
         }
 
-        // Lấy track đầu tiên
-        const track = captionTracks.find(t => t.languageCode === 'en') || captionTracks[0];
+        const track = selectCaptionTrack(captionTracks, languageCandidates) || captionTracks[0];
         const xmlRes = await youtubeGet(track.baseUrl, { headers: { 'User-Agent': USER_AGENT } });
 
         return res.json({
             success: true,
             available_tracks: captionTracks.map(t => ({ lang: t.languageCode, name: t.name?.simpleText })),
             selected: track.languageCode,
+            requested_track: requestedTrack,
+            preferred_lang: preferredLang || null,
+            language_candidates: languageCandidates.filter(Boolean),
             xml_sample: xmlRes.data.substring(0, 500),
             proxy_state: YOUTUBE_PROXY_STATE,
         });

@@ -52,15 +52,56 @@ async function loadTranscriptModule() {
     throw new Error('Khong tim thay fetchTranscript trong youtube-transcript module');
 }
 
-async function fetchTranscriptRows(youtubeId, preferredLang) {
-    const transcriptApi = await loadTranscriptModule();
-    const languageCandidates = [];
+function normalizeLanguageTrack(value, fallback = '') {
+    const normalized = String(value || '').trim().toLowerCase();
 
-    if (preferredLang) {
-        languageCandidates.push(String(preferredLang).trim());
+    if (['english', 'en', 'eng'].includes(normalized)) {
+        return 'english';
     }
 
-    languageCandidates.push('en', 'en-US', 'en-GB', null);
+    if (['chinese', 'cn', 'zh', 'mandarin'].includes(normalized)) {
+        return 'chinese';
+    }
+
+    return fallback;
+}
+
+function buildTranscriptLanguageCandidates(languageTrack, preferredLang = '') {
+    const candidates = [];
+    const seen = new Set();
+
+    const addCandidate = (value) => {
+        if (value == null) return;
+
+        const safe = String(value || '').trim();
+        if (!safe) return;
+
+        const key = safe.toLowerCase();
+        if (seen.has(key)) return;
+
+        seen.add(key);
+        candidates.push(safe);
+    };
+
+    addCandidate(preferredLang);
+
+    const normalizedTrack = normalizeLanguageTrack(languageTrack, 'english');
+    if (normalizedTrack === 'chinese') {
+        ['zh-Hans', 'zh-CN', 'zh', 'zh-Hant', 'zh-TW', 'zh-HK', 'cmn-Hans-CN', 'cmn-Hant-TW'].forEach(addCandidate);
+        ['en', 'en-US', 'en-GB'].forEach(addCandidate);
+    } else {
+        ['en', 'en-US', 'en-GB', 'en-CA'].forEach(addCandidate);
+        ['zh-Hans', 'zh-CN', 'zh'].forEach(addCandidate);
+    }
+
+    return [...candidates, null];
+}
+
+async function fetchTranscriptRows(youtubeId, options = {}) {
+    const transcriptApi = await loadTranscriptModule();
+    const preferredLang = String(options?.preferredLang || '').trim();
+    const languageTrack = normalizeLanguageTrack(options?.languageTrack, 'english');
+    const languageCandidates = buildTranscriptLanguageCandidates(languageTrack, preferredLang);
 
     let lastError = null;
 
@@ -432,7 +473,7 @@ async function analyzeContextWindowWithOllama(chunk, config, previousState, star
     }
 
     const prompt = [
-        'You are a subtitle context analyst for English to Vietnamese translation.',
+        'You are a subtitle context analyst for source-language to Vietnamese translation.',
         'Read this subtitle window and infer relationship/tone for Vietnamese pronouns.',
         'Keep output compact and useful for consistent pronoun selection across dialogue.',
         'Return ONLY strict JSON object with fields:',
@@ -542,7 +583,7 @@ async function translateChunkWithOllama(chunk, config) {
     }));
 
     const prompt = [
-        'Translate each English subtitle to natural Vietnamese for movie subtitles.',
+        'Translate each source subtitle (Chinese or English) to natural Vietnamese for movie subtitles.',
         'Keep meaning accurate, concise, and fluent for spoken dialogue.',
         globalContextHint ? `Global context from full script: ${globalContextHint}` : '',
         buildPronounInstruction(pronounStyle, styleHint),
@@ -707,6 +748,26 @@ function buildHeaders(token) {
     return headers;
 }
 
+async function resolveVideoLanguageTrack(apiBase, headers, videoId) {
+    const numericVideoId = Number(videoId);
+    if (!Number.isFinite(numericVideoId) || numericVideoId <= 0) {
+        return '';
+    }
+
+    try {
+        const response = await axios.get(`${apiBase}/product/${numericVideoId}`, {
+            headers,
+            timeout: 30000,
+        });
+
+        const payload = response.data?.data || response.data || {};
+        return normalizeLanguageTrack(payload.language_track, '');
+    } catch (error) {
+        console.warn(`[import] cannot infer language_track for video_id=${numericVideoId}: ${error.message}`);
+        return '';
+    }
+}
+
 function estimatePayloadBytes(payload) {
     try {
         return Buffer.byteLength(JSON.stringify(payload), 'utf8');
@@ -800,6 +861,10 @@ async function main() {
     const youtubeId = String(args['youtube-id'] || args.youtube_id || '').trim();
     const token = args.token || process.env.API_TOKEN || '';
     const lang = args.lang || process.env.SUBTITLE_LANG || '';
+    const requestedLanguageTrack = normalizeLanguageTrack(
+        args['language-track'] || args['source-track'] || process.env.SUBTITLE_SOURCE_TRACK || '',
+        ''
+    );
     const useLocalAi = Boolean(args['local-ai'] || args['use-local-ai'] || args['ollama-model'] || process.env.LOCAL_AI_TRANSLATE === '1');
     const ollamaUrl = String(args['ollama-url'] || process.env.OLLAMA_URL || 'http://127.0.0.1:11434').trim();
     const ollamaModel = String(args['ollama-model'] || process.env.OLLAMA_MODEL || 'qwen2.5:7b').trim();
@@ -845,8 +910,26 @@ async function main() {
         throw new Error('Thieu --youtube-id. Vi du: --youtube-id R2DU85qLfJQ');
     }
 
+    const headers = buildHeaders(token);
+
+    let effectiveLanguageTrack = requestedLanguageTrack;
+    if (!effectiveLanguageTrack) {
+        effectiveLanguageTrack = await resolveVideoLanguageTrack(apiBase, headers, videoId);
+    }
+
+    if (!effectiveLanguageTrack) {
+        effectiveLanguageTrack = 'english';
+    }
+
+    console.log(
+        `[import] transcript source track=${effectiveLanguageTrack}, preferred_lang=${String(lang || '').trim() || 'auto'}`
+    );
+
     console.log(`[import] fetching transcript locally for youtubeId=${youtubeId}...`);
-    const rows = await fetchTranscriptRows(youtubeId, lang);
+    const rows = await fetchTranscriptRows(youtubeId, {
+        preferredLang: lang,
+        languageTrack: effectiveLanguageTrack,
+    });
     const subtitles = mapRowsToPayload(rows);
 
     if (!subtitles.length) {
@@ -877,7 +960,6 @@ async function main() {
         console.log(`[local-ai] translated ${translatedCount}/${importSubtitles.length} lines`);
     }
 
-    const headers = buildHeaders(token);
     const importPayloadChunks = buildImportPayloadChunks({
         videoId,
         youtubeId,

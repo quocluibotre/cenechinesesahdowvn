@@ -217,6 +217,7 @@ foreach ($video in $videos) {
         id = $videoId
         youtube_id = $youtubeId
         title = [string]$video.title
+        language_track = [string]$video.language_track
         reason = $(if ($needsTimingRepair) { 'repair-timing' } else { 'missing-subtitle' })
     }
 }
@@ -238,7 +239,7 @@ if ($LocalAi) {
 
 if ($DryRun) {
     foreach ($item in $targets) {
-        Write-Host "[dry-run] reason=$($item.reason) video_id=$($item.id) youtube_id=$($item.youtube_id) title=$($item.title)"
+        Write-Host "[dry-run] reason=$($item.reason) video_id=$($item.id) youtube_id=$($item.youtube_id) track=$($item.language_track) title=$($item.title)"
     }
     exit 0
 }
@@ -247,7 +248,7 @@ $ok = 0
 $failed = 0
 
 foreach ($item in $targets) {
-    Write-Host "[run] reason=$($item.reason) import video_id=$($item.id) youtube_id=$($item.youtube_id)"
+    Write-Host "[run] reason=$($item.reason) import video_id=$($item.id) youtube_id=$($item.youtube_id) track=$($item.language_track)"
 
     $nodeArgs = @(
         $importScript,
@@ -256,6 +257,10 @@ foreach ($item in $targets) {
         '--youtube-id', [string]$item.youtube_id,
         '--max-rounds', [string]$MaxRounds
     )
+
+    if (-not [string]::IsNullOrWhiteSpace($item.language_track)) {
+        $nodeArgs += @('--language-track', [string]$item.language_track)
+    }
 
     if ($Token) {
         $nodeArgs += @('--token', $Token)
