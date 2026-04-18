@@ -237,6 +237,424 @@ const resolveValidCategoryId = async (rawCategoryId) => {
     return null;
 };
 
+const toFiniteNumber = (value, fallback = 0) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const clampNumber = (value, min, max, fallback) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+        return fallback;
+    }
+
+    return Math.max(min, Math.min(max, Math.floor(parsed)));
+};
+
+const parseNumericIdList = (...rawValues) => {
+    const ids = new Set();
+
+    const pushValue = (raw) => {
+        if (raw === null || raw === undefined) {
+            return;
+        }
+
+        if (Array.isArray(raw)) {
+            raw.forEach(pushValue);
+            return;
+        }
+
+        const source = String(raw || '').trim();
+        if (!source) {
+            return;
+        }
+
+        source.split(',').forEach((token) => {
+            const parsed = Number(String(token || '').trim());
+            if (Number.isFinite(parsed) && parsed > 0) {
+                ids.add(Math.floor(parsed));
+            }
+        });
+    };
+
+    rawValues.forEach(pushValue);
+    return Array.from(ids);
+};
+
+const daysSince = (input) => {
+    if (!input) {
+        return 999;
+    }
+
+    const time = new Date(input).getTime();
+    if (!Number.isFinite(time)) {
+        return 999;
+    }
+
+    return Math.max(0, (Date.now() - time) / (1000 * 60 * 60 * 24));
+};
+
+const createEmptyRecommendationProfile = () => ({
+    preferredTrack: null,
+    preferredCategoryId: null,
+    preferredHsk: 0,
+    progressByVideoId: new Map(),
+    recentlyWatchedIds: new Set(),
+});
+
+const buildUserRecommendationProfile = async (userId) => {
+    const profile = createEmptyRecommendationProfile();
+
+    if (!userId) {
+        return profile;
+    }
+
+    const [progressRows] = await db.promise().query(
+        `
+        SELECT video_id, watched_seconds, watch_percentage, is_completed, last_watched_at
+        FROM user_progress
+        WHERE user_id = ?
+        ORDER BY last_watched_at DESC
+        LIMIT 240
+        `,
+        [userId]
+    );
+
+    for (const row of progressRows) {
+        const safeVideoId = Number(row.video_id);
+        if (!Number.isFinite(safeVideoId) || safeVideoId <= 0) {
+            continue;
+        }
+
+        profile.progressByVideoId.set(safeVideoId, {
+            watchedSeconds: toFiniteNumber(row.watched_seconds, 0),
+            watchPercentage: toFiniteNumber(row.watch_percentage, 0),
+            isCompleted: Boolean(Number(row.is_completed || 0)),
+            lastWatchedAt: row.last_watched_at || null,
+        });
+
+        if (profile.recentlyWatchedIds.size < 24) {
+            profile.recentlyWatchedIds.add(safeVideoId);
+        }
+    }
+
+    const [trackRows] = await db.promise().query(
+        `
+        SELECT
+            v.language_track,
+            COALESCE(SUM(up.watched_seconds), 0) AS total_watch,
+            COUNT(*) AS total_rows
+        FROM user_progress up
+        JOIN videos v ON v.id = up.video_id
+        WHERE up.user_id = ?
+        GROUP BY v.language_track
+        ORDER BY total_watch DESC, total_rows DESC
+        LIMIT 1
+        `,
+        [userId]
+    );
+
+    if (trackRows.length) {
+        profile.preferredTrack = normalizeLanguageTrack(trackRows[0].language_track, 'all');
+    }
+
+    const [categoryRows] = await db.promise().query(
+        `
+        SELECT
+            v.category_id,
+            COALESCE(SUM(up.watched_seconds), 0) AS total_watch,
+            COUNT(*) AS total_rows
+        FROM user_progress up
+        JOIN videos v ON v.id = up.video_id
+        WHERE up.user_id = ? AND v.category_id IS NOT NULL
+        GROUP BY v.category_id
+        ORDER BY total_watch DESC, total_rows DESC
+        LIMIT 1
+        `,
+        [userId]
+    );
+
+    if (categoryRows.length) {
+        const preferredCategoryId = Number(categoryRows[0].category_id);
+        profile.preferredCategoryId = Number.isFinite(preferredCategoryId) && preferredCategoryId > 0
+            ? preferredCategoryId
+            : null;
+    }
+
+    const [hskRows] = await db.promise().query(
+        `
+        SELECT COALESCE(AVG(NULLIF(v.hsk_level, 0)), 0) AS avg_hsk
+        FROM user_progress up
+        JOIN videos v ON v.id = up.video_id
+        WHERE up.user_id = ?
+        `,
+        [userId]
+    );
+
+    const avgHsk = Number(hskRows?.[0]?.avg_hsk || 0);
+    if (Number.isFinite(avgHsk) && avgHsk > 0) {
+        profile.preferredHsk = Math.max(1, Math.min(6, Math.round(avgHsk * 10) / 10));
+    }
+
+    return profile;
+};
+
+const scoreRecommendationCandidate = (candidate, context = {}) => {
+    const targetTrack = context.targetTrack || null;
+    const targetCategoryId = Number(context.targetCategoryId || 0);
+    const targetHsk = Number(context.targetHsk || 0);
+    const profile = context.profile || createEmptyRecommendationProfile();
+
+    const videoId = Number(candidate.id || 0);
+    const videoTrack = normalizeLanguageTrack(candidate.language_track, 'chinese');
+    const videoCategoryId = Number(candidate.category_id || 0);
+    const videoHsk = Number(candidate.hsk_level || 0);
+    const viewCount = Math.max(0, Number(candidate.view_count || 0));
+
+    let score = 10;
+
+    if (targetTrack && videoTrack === targetTrack) {
+        score += 24;
+    }
+
+    if (targetCategoryId > 0 && videoCategoryId === targetCategoryId) {
+        score += 34;
+    }
+
+    if (targetHsk > 0 && videoHsk > 0) {
+        score += Math.max(0, 18 - (Math.abs(videoHsk - targetHsk) * 4));
+    }
+
+    if (profile.preferredTrack && profile.preferredTrack !== 'all' && videoTrack === profile.preferredTrack) {
+        score += 12;
+    }
+
+    if (profile.preferredCategoryId && videoCategoryId === profile.preferredCategoryId) {
+        score += 14;
+    }
+
+    if (profile.preferredHsk > 0 && videoHsk > 0) {
+        score += Math.max(0, 10 - (Math.abs(videoHsk - profile.preferredHsk) * 2));
+    }
+
+    score += Math.min(18, Math.log2(viewCount + 1) * 3.1);
+
+    const ageInDays = daysSince(candidate.created_at);
+    if (ageInDays <= 120) {
+        score += Math.max(0, 14 - (ageInDays * 0.12));
+    }
+
+    const progress = profile.progressByVideoId.get(videoId);
+    if (progress) {
+        const watchPercentage = toFiniteNumber(progress.watchPercentage, 0);
+        if (watchPercentage > 0 && watchPercentage < 95) {
+            score += 28 + Math.min(10, watchPercentage / 12);
+        }
+
+        if (watchPercentage >= 95 || progress.isCompleted) {
+            score -= 20;
+        }
+    }
+
+    if (profile.recentlyWatchedIds.has(videoId)) {
+        score -= 8;
+    }
+
+    return Number(score.toFixed(2));
+};
+
+exports.getRecommendedVideos = async (req, res) => {
+    try {
+        await ensureVideoTrackColumn();
+
+        const safeLimit = clampNumber(req.query.limit, 4, 24, 12);
+        const requestedTrack = normalizeLanguageTrack(req.query.track, 'all');
+        const requestedCategoryId = Number(req.query.category || 0);
+        const requestedHskLevel = clampNumber(req.query.hsk_level, 1, 6, 0);
+        const currentVideoId = Number(req.query.video_id || req.query.current_video_id || req.query.videoId || 0);
+
+        const excludeIds = parseNumericIdList(
+            req.query.exclude,
+            req.query.exclude_ids,
+            req.query.exclude_video_ids
+        );
+
+        if (Number.isFinite(currentVideoId) && currentVideoId > 0) {
+            excludeIds.push(currentVideoId);
+        }
+
+        let seedVideo = null;
+        if (Number.isFinite(currentVideoId) && currentVideoId > 0) {
+            const [seedRows] = await db.promise().query(
+                'SELECT id, category_id, hsk_level, language_track FROM videos WHERE id = ? LIMIT 1',
+                [currentVideoId]
+            );
+            if (seedRows.length) {
+                seedVideo = seedRows[0];
+            }
+        }
+
+        const profile = req.userId
+            ? await buildUserRecommendationProfile(req.userId)
+            : createEmptyRecommendationProfile();
+
+        const seedTrack = normalizeLanguageTrack(seedVideo?.language_track, 'all');
+        const profileTrack = normalizeLanguageTrack(profile.preferredTrack, 'all');
+
+        const targetTrack = requestedTrack !== 'all'
+            ? requestedTrack
+            : (seedTrack !== 'all' ? seedTrack : (profileTrack !== 'all' ? profileTrack : null));
+
+        const targetCategoryId = Number.isFinite(requestedCategoryId) && requestedCategoryId > 0
+            ? requestedCategoryId
+            : (Number(seedVideo?.category_id || 0) || Number(profile.preferredCategoryId || 0) || 0);
+
+        const targetHsk = requestedHskLevel
+            || Number(seedVideo?.hsk_level || 0)
+            || Number(profile.preferredHsk || 0)
+            || 0;
+
+        const poolLimit = Math.max(40, Math.min(260, safeLimit * 10));
+
+        const loadCandidates = async (trackFilter = null) => {
+            let query = `
+                SELECT v.*, c.name AS category_name
+                FROM videos v
+                LEFT JOIN categories c ON v.category_id = c.id
+                WHERE v.is_published = 1
+            `;
+            const params = [];
+
+            if (trackFilter) {
+                query += ' AND v.language_track = ?';
+                params.push(trackFilter);
+            }
+
+            const dedupedExcludeIds = parseNumericIdList(excludeIds);
+            if (dedupedExcludeIds.length) {
+                query += ' AND v.id NOT IN (?)';
+                params.push(dedupedExcludeIds);
+            }
+
+            query += ' ORDER BY v.created_at DESC LIMIT ?';
+            params.push(poolLimit);
+
+            const [rows] = await db.promise().query(query, params);
+            return rows;
+        };
+
+        let candidates = await loadCandidates(targetTrack);
+
+        if (candidates.length < safeLimit && targetTrack) {
+            const fallbackCandidates = await loadCandidates(null);
+            const seenIds = new Set(candidates.map((item) => Number(item.id || 0)));
+
+            for (const candidate of fallbackCandidates) {
+                const candidateId = Number(candidate.id || 0);
+                if (seenIds.has(candidateId)) {
+                    continue;
+                }
+
+                seenIds.add(candidateId);
+                candidates.push(candidate);
+
+                if (candidates.length >= poolLimit) {
+                    break;
+                }
+            }
+        }
+
+        if (!candidates.length) {
+            return res.status(200).json({
+                success: true,
+                data: [],
+                count: 0,
+                strategy: {
+                    personalized: Boolean(req.userId),
+                    target_track: targetTrack || 'all',
+                    target_category_id: targetCategoryId || null,
+                    target_hsk_level: targetHsk || null,
+                    seed_video_id: seedVideo ? Number(seedVideo.id) : null,
+                },
+            });
+        }
+
+        const scored = candidates
+            .map((candidate) => ({
+                ...candidate,
+                recommend_score: scoreRecommendationCandidate(candidate, {
+                    targetTrack,
+                    targetCategoryId,
+                    targetHsk,
+                    profile,
+                }),
+            }))
+            .sort((a, b) => (
+                Number(b.recommend_score || 0) - Number(a.recommend_score || 0)
+                || Number(b.view_count || 0) - Number(a.view_count || 0)
+                || Number(b.id || 0) - Number(a.id || 0)
+            ));
+
+        const deduped = [];
+        const seenTitleTrack = new Set();
+        const pickedIds = new Set();
+
+        for (const item of scored) {
+            const itemId = Number(item.id || 0);
+            if (pickedIds.has(itemId)) {
+                continue;
+            }
+
+            const dedupeKey = `${normalizeLanguageTrack(item.language_track, 'chinese')}|${String(item.title || '').trim().toLowerCase()}`;
+            if (dedupeKey && seenTitleTrack.has(dedupeKey)) {
+                continue;
+            }
+
+            pickedIds.add(itemId);
+            if (dedupeKey) {
+                seenTitleTrack.add(dedupeKey);
+            }
+
+            deduped.push(item);
+            if (deduped.length >= safeLimit) {
+                break;
+            }
+        }
+
+        if (deduped.length < safeLimit) {
+            for (const item of scored) {
+                const itemId = Number(item.id || 0);
+                if (pickedIds.has(itemId)) {
+                    continue;
+                }
+
+                pickedIds.add(itemId);
+                deduped.push(item);
+                if (deduped.length >= safeLimit) {
+                    break;
+                }
+            }
+        }
+
+        res.status(200).json({
+            success: true,
+            data: deduped,
+            count: deduped.length,
+            strategy: {
+                personalized: Boolean(req.userId),
+                target_track: targetTrack || 'all',
+                target_category_id: targetCategoryId || null,
+                target_hsk_level: targetHsk || null,
+                seed_video_id: seedVideo ? Number(seedVideo.id) : null,
+                pool_size: candidates.length,
+            },
+        });
+    } catch (error) {
+        console.error('Error getRecommendedVideos:', error);
+        res.status(500).json({ success: false, error: 'Loi server khi tao goi y video.' });
+    }
+};
+
 // Lấy danh sách Video (Convert từ get_videos.php)
 exports.getVideos = async (req, res) => {
     try {

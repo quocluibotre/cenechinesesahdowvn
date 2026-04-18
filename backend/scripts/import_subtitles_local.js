@@ -152,6 +152,156 @@ function normalizeTranslatedText(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function normalizeBooleanInput(value, fallback = false) {
+    if (typeof value === 'boolean') {
+        return value;
+    }
+
+    if (typeof value === 'number') {
+        return value !== 0;
+    }
+
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) {
+        return fallback;
+    }
+
+    if (['1', 'true', 'yes', 'on', 'y'].includes(normalized)) {
+        return true;
+    }
+
+    if (['0', 'false', 'no', 'off', 'n'].includes(normalized)) {
+        return false;
+    }
+
+    return fallback;
+}
+
+function normalizeLimitedNumber(value, min, max, fallback) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+        return fallback;
+    }
+
+    return Math.max(min, Math.min(max, Math.floor(parsed)));
+}
+
+function normalizeContextNote(value, maxLength = 220) {
+    return String(value || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, maxLength);
+}
+
+function normalizeContextState(raw, fallbackStyle = 'natural') {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const summary = normalizeContextNote(
+        source.context_summary || source.summary || source.story_summary || '',
+        1000
+    );
+
+    const policySource = Array.isArray(source.pronoun_policies)
+        ? source.pronoun_policies
+        : (Array.isArray(source.policies) ? source.policies : []);
+    const pronounPolicies = [];
+    for (const item of policySource) {
+        const note = normalizeContextNote(item, 200);
+        if (note && !pronounPolicies.includes(note)) {
+            pronounPolicies.push(note);
+        }
+        if (pronounPolicies.length >= 12) {
+            break;
+        }
+    }
+
+    const characterSource = Array.isArray(source.character_notes)
+        ? source.character_notes
+        : (Array.isArray(source.characters) ? source.characters : []);
+    const characterNotes = [];
+    for (const item of characterSource) {
+        if (typeof item === 'string') {
+            const note = normalizeContextNote(item, 240);
+            if (note && !characterNotes.includes(note)) {
+                characterNotes.push(note);
+            }
+        } else if (item && typeof item === 'object') {
+            const name = normalizeContextNote(item.name || item.character || item.person || '', 80);
+            const relation = normalizeContextNote(item.relation || item.role || '', 120);
+            const hint = normalizeContextNote(item.pronoun_hint || item.hint || '', 120);
+            const note = [name, relation, hint].filter(Boolean).join(' - ');
+            if (note && !characterNotes.includes(note)) {
+                characterNotes.push(note);
+            }
+        }
+
+        if (characterNotes.length >= 12) {
+            break;
+        }
+    }
+
+    return {
+        style: normalizePronounStyle(source.style || source.pronoun_style || fallbackStyle),
+        contextSummary: summary,
+        pronounPolicies,
+        characterNotes,
+    };
+}
+
+function mergeContextState(baseState, nextState) {
+    const merged = {
+        style: normalizePronounStyle(nextState?.style || baseState?.style || 'natural'),
+        contextSummary: normalizeContextNote(nextState?.contextSummary || '', 1000) || normalizeContextNote(baseState?.contextSummary || '', 1000),
+        pronounPolicies: [],
+        characterNotes: [],
+    };
+
+    const mergedPolicies = [];
+    for (const item of [...(baseState?.pronounPolicies || []), ...(nextState?.pronounPolicies || [])]) {
+        const note = normalizeContextNote(item, 200);
+        if (note && !mergedPolicies.includes(note)) {
+            mergedPolicies.push(note);
+        }
+        if (mergedPolicies.length >= 12) {
+            break;
+        }
+    }
+    merged.pronounPolicies = mergedPolicies;
+
+    const mergedCharacters = [];
+    for (const item of [...(baseState?.characterNotes || []), ...(nextState?.characterNotes || [])]) {
+        const note = normalizeContextNote(item, 240);
+        if (note && !mergedCharacters.includes(note)) {
+            mergedCharacters.push(note);
+        }
+        if (mergedCharacters.length >= 12) {
+            break;
+        }
+    }
+    merged.characterNotes = mergedCharacters;
+
+    return merged;
+}
+
+function buildGlobalContextHintText(state, maxChars = 1600) {
+    const lines = [];
+    const summary = normalizeContextNote(state?.contextSummary || '', 1000);
+    if (summary) {
+        lines.push(`Story context: ${summary}`);
+    }
+
+    const policies = Array.isArray(state?.pronounPolicies) ? state.pronounPolicies.filter(Boolean) : [];
+    if (policies.length) {
+        lines.push(`Pronoun policies: ${policies.join(' | ')}`);
+    }
+
+    const characters = Array.isArray(state?.characterNotes) ? state.characterNotes.filter(Boolean) : [];
+    if (characters.length) {
+        lines.push(`Character hints: ${characters.join(' | ')}`);
+    }
+
+    return lines.join('\n').slice(0, Math.max(300, Number(maxChars) || 1600));
+}
+
 function extractTranslationText(entry) {
     if (typeof entry === 'string') {
         return normalizeTranslatedText(entry);
@@ -224,9 +374,159 @@ function chunkArray(source, size) {
     return chunks;
 }
 
+function normalizePronounStyle(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+
+    if (['formal', 'neutral', 'toi-ban', 'toi_ban'].includes(normalized)) {
+        return 'formal';
+    }
+
+    if (['intimate', 'close', 'than-mat', 'than_mat', 'family', 'anh-em', 'chi-em'].includes(normalized)) {
+        return 'intimate';
+    }
+
+    return 'natural';
+}
+
+function buildPronounInstruction(pronounStyle, styleHint = '') {
+    const lines = [
+        'Use contextual Vietnamese pronouns and keep relationship consistent across adjacent lines.',
+        'Do not default to "toi/ban" if the context is close, emotional, or family-like.',
+        'Prefer natural pairs like "anh/em", "chi/em", "co/chau" when context supports them.',
+        'If one line is ambiguous, infer from nearby lines and keep the chosen pronoun pair stable.',
+    ];
+
+    if (pronounStyle === 'formal') {
+        lines.push('Bias toward polite-neutral pronouns unless close relationship is explicit.');
+    } else if (pronounStyle === 'intimate') {
+        lines.push('Bias toward close conversational pronouns in friend/family context when reasonable.');
+    }
+
+    const safeHint = String(styleHint || '').trim();
+    if (safeHint) {
+        lines.push(`Additional style hint: ${safeHint}`);
+    }
+
+    return lines.join(' ');
+}
+
+async function analyzeContextWindowWithOllama(chunk, config, previousState, startIndex) {
+    const ollamaUrl = String(config?.url || '').replace(/\/$/, '');
+    const model = String(config?.model || '').trim();
+
+    if (!ollamaUrl) {
+        throw new Error('Thieu ollama url');
+    }
+
+    if (!model) {
+        throw new Error('Thieu ollama model');
+    }
+
+    const payload = chunk.map((item, index) => ({
+        line_no: startIndex + index + 1,
+        en_text: String(item?.en_text || '').trim(),
+    })).filter((item) => item.en_text);
+
+    if (!payload.length) {
+        return normalizeContextState(previousState, previousState?.style || 'natural');
+    }
+
+    const prompt = [
+        'You are a subtitle context analyst for English to Vietnamese translation.',
+        'Read this subtitle window and infer relationship/tone for Vietnamese pronouns.',
+        'Keep output compact and useful for consistent pronoun selection across dialogue.',
+        'Return ONLY strict JSON object with fields:',
+        '{"style":"formal|natural|intimate","context_summary":"...","pronoun_policies":["..."],"character_notes":["..."]}',
+        'No markdown. No explanation outside JSON.',
+        `Previous style: ${normalizePronounStyle(previousState?.style || 'natural')}`,
+        `Previous summary: ${normalizeContextNote(previousState?.contextSummary || '', 600) || '(none)'}`,
+        `Data: ${JSON.stringify(payload)}`,
+    ].join('\n');
+
+    const response = await axios.post(
+        `${ollamaUrl}/api/chat`,
+        {
+            model,
+            stream: false,
+            format: 'json',
+            options: {
+                temperature: 0,
+            },
+            messages: [
+                {
+                    role: 'system',
+                    content: 'You analyze subtitle context and output strict JSON only.',
+                },
+                {
+                    role: 'user',
+                    content: prompt,
+                },
+            ],
+        },
+        {
+            timeout: 240000,
+            headers: { 'Content-Type': 'application/json' },
+        }
+    );
+
+    const content = response.data?.message?.content || '';
+    const parsed = parseJsonLoose(content);
+    return normalizeContextState(parsed, previousState?.style || 'natural');
+}
+
+async function buildGlobalContextHintWithOllama(subtitles, config) {
+    const items = Array.isArray(subtitles) ? subtitles : [];
+    if (!items.length) {
+        return {
+            hint: '',
+            suggestedPronounStyle: normalizePronounStyle(config?.pronounStyle || 'natural'),
+        };
+    }
+
+    const windowSize = normalizeLimitedNumber(
+        config?.contextWindowLines || process.env.LOCAL_AI_CONTEXT_WINDOW_LINES,
+        20,
+        260,
+        120
+    );
+    const hintMaxChars = normalizeLimitedNumber(
+        config?.contextMaxChars || process.env.LOCAL_AI_CONTEXT_MAX_CHARS,
+        300,
+        2800,
+        1600
+    );
+    const chunks = chunkArray(items, windowSize);
+
+    let state = normalizeContextState({
+        style: normalizePronounStyle(config?.pronounStyle || 'natural'),
+        context_summary: '',
+        pronoun_policies: [],
+        character_notes: [],
+    }, 'natural');
+
+    for (let i = 0; i < chunks.length; i += 1) {
+        const chunk = chunks[i];
+        try {
+            const analyzed = await analyzeContextWindowWithOllama(chunk, config, state, i * windowSize);
+            state = mergeContextState(state, analyzed);
+            console.log(`[local-ai] context window ${i + 1}/${chunks.length} analyzed (${chunk.length} lines)`);
+        } catch (error) {
+            console.warn(`[local-ai] context window ${i + 1}/${chunks.length} skipped: ${error.message}`);
+        }
+    }
+
+    return {
+        hint: buildGlobalContextHintText(state, hintMaxChars),
+        suggestedPronounStyle: normalizePronounStyle(state.style || config?.pronounStyle || 'natural'),
+    };
+}
+
 async function translateChunkWithOllama(chunk, config) {
     const ollamaUrl = String(config?.url || '').replace(/\/$/, '');
     const model = String(config?.model || '').trim();
+    const pronounStyle = normalizePronounStyle(config?.pronounStyle || process.env.LOCAL_AI_PRONOUN_STYLE || 'natural');
+    const styleHint = String(config?.styleHint || process.env.LOCAL_AI_STYLE_HINT || '').trim();
+    const globalContextHint = normalizeContextNote(config?.globalContextHint || '', 2200);
 
     if (!ollamaUrl) {
         throw new Error('Thieu ollama url');
@@ -243,10 +543,13 @@ async function translateChunkWithOllama(chunk, config) {
 
     const prompt = [
         'Translate each English subtitle to natural Vietnamese for movie subtitles.',
-        'Keep meaning accurate, concise, and fluent.',
+        'Keep meaning accurate, concise, and fluent for spoken dialogue.',
+        globalContextHint ? `Global context from full script: ${globalContextHint}` : '',
+        buildPronounInstruction(pronounStyle, styleHint),
+        'Prefer meaning-equivalent translation over literal word-by-word translation.',
         `Return ONLY strict JSON: {"translations": ["...", "..."]} with exactly ${chunk.length} items in the same order.`,
         `Input: ${JSON.stringify(payload)}`,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
 
     const response = await axios.post(
         `${ollamaUrl}/api/chat`,
@@ -297,6 +600,19 @@ async function translateChunkWithFallback(chunk, config) {
             throw error;
         }
 
+        // Keep local context by recursively splitting chunks before per-line fallback.
+        if (chunk.length > 2) {
+            const middle = Math.ceil(chunk.length / 2);
+
+            try {
+                const left = await translateChunkWithFallback(chunk.slice(0, middle), config);
+                const right = await translateChunkWithFallback(chunk.slice(middle), config);
+                return [...left, ...right];
+            } catch {
+                // Continue to per-line fallback below.
+            }
+        }
+
         const output = [];
         let recovered = 0;
 
@@ -323,11 +639,44 @@ async function translateSubtitlesWithOllama(subtitles, config) {
     const chunkSize = Math.max(4, Math.min(60, Number(config?.chunkSize || 18)));
     const chunks = chunkArray(subtitles, chunkSize);
     const output = [];
+    const requestedPronounStyle = normalizePronounStyle(config?.pronounStyle || process.env.LOCAL_AI_PRONOUN_STYLE || 'natural');
+    const hasExplicitPronounStyle = normalizeBooleanInput(config?.hasExplicitPronounStyle, false);
+    const shouldUseGlobalContext = normalizeBooleanInput(
+        config?.useGlobalContext ?? process.env.LOCAL_AI_GLOBAL_CONTEXT,
+        false
+    );
+
+    let effectivePronounStyle = requestedPronounStyle;
+    let globalContextHint = '';
+
+    if (shouldUseGlobalContext) {
+        const contextResult = await buildGlobalContextHintWithOllama(subtitles, {
+            ...config,
+            pronounStyle: requestedPronounStyle,
+        });
+
+        globalContextHint = String(contextResult?.hint || '').trim();
+        if (!hasExplicitPronounStyle && contextResult?.suggestedPronounStyle) {
+            effectivePronounStyle = normalizePronounStyle(contextResult.suggestedPronounStyle);
+        }
+
+        if (globalContextHint) {
+            console.log(`[local-ai] global context ready (style=${effectivePronounStyle})`);
+        } else {
+            console.warn('[local-ai] global context enabled but empty; continue with chunk-only context');
+        }
+    }
+
+    const runtimeConfig = {
+        ...config,
+        pronounStyle: effectivePronounStyle,
+        globalContextHint,
+    };
 
     for (let i = 0; i < chunks.length; i += 1) {
         const chunk = chunks[i];
         try {
-            const translated = await translateChunkWithFallback(chunk, config);
+            const translated = await translateChunkWithFallback(chunk, runtimeConfig);
             output.push(...translated);
             const translatedCount = translated.filter((item) => normalizeTranslatedText(item.vn_text)).length;
 
@@ -403,6 +752,26 @@ async function main() {
     const ollamaUrl = String(args['ollama-url'] || process.env.OLLAMA_URL || 'http://127.0.0.1:11434').trim();
     const ollamaModel = String(args['ollama-model'] || process.env.OLLAMA_MODEL || 'qwen2.5:7b').trim();
     const ollamaChunkSize = Number(args['ollama-chunk-size'] || process.env.OLLAMA_CHUNK_SIZE || 18);
+    const rawPronounStyle = args['pronoun-style'] ?? process.env.LOCAL_AI_PRONOUN_STYLE ?? '';
+    const pronounStyle = String(rawPronounStyle || 'natural').trim();
+    const hasExplicitPronounStyle = String(rawPronounStyle || '').trim().length > 0;
+    const styleHint = String(args['style-hint'] || process.env.LOCAL_AI_STYLE_HINT || '').trim();
+    const useGlobalContext = normalizeBooleanInput(
+        args['global-context'] ?? process.env.LOCAL_AI_GLOBAL_CONTEXT,
+        false
+    );
+    const contextWindowLines = normalizeLimitedNumber(
+        args['context-window-lines'] || process.env.LOCAL_AI_CONTEXT_WINDOW_LINES,
+        20,
+        260,
+        120
+    );
+    const contextMaxChars = normalizeLimitedNumber(
+        args['context-max-chars'] || process.env.LOCAL_AI_CONTEXT_MAX_CHARS,
+        300,
+        2800,
+        1600
+    );
     const shouldRetranslate = Boolean(args['with-retranslate']) || (!args['skip-retranslate'] && !useLocalAi);
     const maxRounds = args['max-rounds'] || process.env.RETRANSLATE_MAX_ROUNDS || 8;
 
@@ -431,11 +800,19 @@ async function main() {
     let importSubtitles = subtitles;
 
     if (useLocalAi) {
-        console.log(`[local-ai] translating with Ollama model=${ollamaModel}...`);
+        console.log(
+            `[local-ai] translating with Ollama model=${ollamaModel}, pronoun_style=${normalizePronounStyle(pronounStyle)}, global_context=${useGlobalContext ? 'on' : 'off'}...`
+        );
         importSubtitles = await translateSubtitlesWithOllama(subtitles, {
             url: ollamaUrl,
             model: ollamaModel,
             chunkSize: ollamaChunkSize,
+            pronounStyle,
+            hasExplicitPronounStyle,
+            styleHint,
+            useGlobalContext,
+            contextWindowLines,
+            contextMaxChars,
         });
 
         const translatedCount = importSubtitles.filter((item) => normalizeTranslatedText(item.vn_text)).length;

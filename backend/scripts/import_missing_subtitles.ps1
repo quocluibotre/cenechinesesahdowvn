@@ -10,6 +10,11 @@ param(
     [string]$OllamaModel = "qwen2.5:7b",
     [string]$OllamaUrl = "",
     [int]$OllamaChunkSize = 6,
+    [string]$PronounStyle = "",
+    [string]$StyleHint = "",
+    [switch]$GlobalContext,
+    [int]$ContextWindowLines = 120,
+    [int]$ContextMaxChars = 1600,
     [switch]$WithRetranslate,
     [switch]$PublishedOnly,
     [switch]$SkipRetranslate,
@@ -126,6 +131,14 @@ if ($OllamaChunkSize -lt 1) {
     throw "OllamaChunkSize must be >= 1"
 }
 
+if ($ContextWindowLines -lt 20) {
+    throw "ContextWindowLines must be >= 20"
+}
+
+if ($ContextMaxChars -lt 300) {
+    throw "ContextMaxChars must be >= 300"
+}
+
 if (-not (Test-Path $importScript)) {
     throw "Cannot find import script at $importScript"
 }
@@ -216,7 +229,9 @@ if ($targets.Count -eq 0) {
 }
 
 if ($LocalAi) {
-    Write-Host "[mode] local-ai=on model=$OllamaModel chunk_size=$OllamaChunkSize with_retranslate=$WithRetranslate"
+    $displayPronounStyle = if ([string]::IsNullOrWhiteSpace($PronounStyle)) { 'natural' } else { $PronounStyle }
+    $displayGlobalContext = if ($GlobalContext) { 'on' } else { 'off' }
+    Write-Host "[mode] local-ai=on model=$OllamaModel chunk_size=$OllamaChunkSize pronoun_style=$displayPronounStyle global_context=$displayGlobalContext with_retranslate=$WithRetranslate"
 } else {
     Write-Host '[mode] local-ai=off'
 }
@@ -255,6 +270,20 @@ foreach ($item in $targets) {
 
         if (-not [string]::IsNullOrWhiteSpace($OllamaUrl)) {
             $nodeArgs += @('--ollama-url', $OllamaUrl)
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($PronounStyle)) {
+            $nodeArgs += @('--pronoun-style', $PronounStyle)
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($StyleHint)) {
+            $nodeArgs += @('--style-hint', $StyleHint)
+        }
+
+        if ($GlobalContext) {
+            $nodeArgs += '--global-context'
+            $nodeArgs += @('--context-window-lines', [string]$ContextWindowLines)
+            $nodeArgs += @('--context-max-chars', [string]$ContextMaxChars)
         }
 
         $nodeArgs += @('--ollama-chunk-size', [string]$OllamaChunkSize)

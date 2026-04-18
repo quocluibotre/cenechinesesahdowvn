@@ -13,24 +13,26 @@ powershell -ExecutionPolicy Bypass -File .\scripts\import_missing_subtitles.ps1 
 powershell -ExecutionPolicy Bypass -File .\scripts\import_missing_subtitles.ps1 -Api https://cenechinesesahdowvn.onrender.com/api -MaxRounds 6
 
 4) Batch import + Local AI (nhanh, khuyen nghi)
-powershell -ExecutionPolicy Bypass -File .\scripts\import_missing_subtitles.ps1 -Api https://cenechinesesahdowvn.onrender.com/api -LocalAi -OllamaModel qwen2.5:3b -OllamaChunkSize 14
+powershell -ExecutionPolicy Bypass -File .\scripts\import_missing_subtitles.ps1 -Api https://cenechinesesahdowvn.onrender.com/api -LocalAi -OllamaModel qwen2.5:3b -OllamaChunkSize 14 -PronounStyle natural
 
 5) Batch import + Local AI (can bang chat luong)
-powershell -ExecutionPolicy Bypass -File .\scripts\import_missing_subtitles.ps1 -Api https://cenechinesesahdowvn.onrender.com/api -LocalAi -OllamaModel qwen2.5:7b -OllamaChunkSize 10
+powershell -ExecutionPolicy Bypass -File .\scripts\import_missing_subtitles.ps1 -Api https://cenechinesesahdowvn.onrender.com/api -LocalAi -OllamaModel qwen2.5:7b -OllamaChunkSize 10 -PronounStyle natural -GlobalContext -ContextWindowLines 120
 
 6) Batch import + Local AI + retranslate backend (chat luong cao hon, cham hon)
-powershell -ExecutionPolicy Bypass -File .\scripts\import_missing_subtitles.ps1 -Api https://cenechinesesahdowvn.onrender.com/api -LocalAi -OllamaModel qwen2.5:7b -OllamaChunkSize 6 -WithRetranslate -MaxRounds 2
+powershell -ExecutionPolicy Bypass -File .\scripts\import_missing_subtitles.ps1 -Api https://cenechinesesahdowvn.onrender.com/api -LocalAi -OllamaModel qwen2.5:7b -OllamaChunkSize 6 -PronounStyle intimate -StyleHint "Giu xung ho tu nhien va nhat quan theo ngu canh" -GlobalContext -ContextWindowLines 120 -WithRetranslate -MaxRounds 2
 
 7) Import 1 video (khong Local AI)
 npm run subtitles:import-local -- --api https://cenechinesesahdowvn.onrender.com/api --video-id ID_VIDEO --youtube-id YOUTUBE_ID --max-rounds 6
 
 8) Import 1 video + Local AI
-npm run subtitles:import-local -- --api https://cenechinesesahdowvn.onrender.com/api --video-id ID_VIDEO --youtube-id YOUTUBE_ID --local-ai --ollama-model qwen2.5:7b --ollama-chunk-size 6
+npm run subtitles:import-local -- --api https://cenechinesesahdowvn.onrender.com/api --video-id ID_VIDEO --youtube-id YOUTUBE_ID --local-ai --ollama-model qwen2.5:7b --ollama-chunk-size 6 --pronoun-style natural --global-context --context-window-lines 120
 
 9) Import 1 video + Local AI + retranslate backend
-npm run subtitles:import-local -- --api https://cenechinesesahdowvn.onrender.com/api --video-id ID_VIDEO --youtube-id YOUTUBE_ID --local-ai --ollama-model qwen2.5:7b --ollama-chunk-size 6 --with-retranslate --max-rounds 2
+npm run subtitles:import-local -- --api https://cenechinesesahdowvn.onrender.com/api --video-id ID_VIDEO --youtube-id YOUTUBE_ID --local-ai --ollama-model qwen2.5:7b --ollama-chunk-size 6 --pronoun-style intimate --style-hint "Giu xung ho tu nhien theo ngu canh" --global-context --context-window-lines 120 --with-retranslate --max-rounds 2
 
 Ghi chu:
 - Khong duoc dung dong thoi -SkipRetranslate va -WithRetranslate.
 - Neu uu tien toc do: dung model 3b va chunk size 12-20.
 - Neu chua co model, tai truoc: ollama pull qwen2.5:3b (hoac qwen2.5:7b).
+- PronounStyle ho tro: natural | formal | intimate.
+- GlobalContext: cho local AI doc toan bo script theo cua so (window) truoc khi dich tung chunk, de giu xung ho nhat quan hon.

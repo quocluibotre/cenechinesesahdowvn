@@ -33,6 +33,8 @@ const Library = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [videos, setVideos] = useState([]);
+  const [recommendedVideos, setRecommendedVideos] = useState([]);
+  const [loadingRecommendations, setLoadingRecommendations] = useState(false);
   const [categories, setCategories] = useState([]);
   const [continueWatching, setContinueWatching] = useState([]);
   const [savedWords, setSavedWords] = useState([]);
@@ -272,6 +274,54 @@ const Library = () => {
   }, []);
 
   useEffect(() => {
+    let alive = true;
+
+    const run = async () => {
+      try {
+        setLoadingRecommendations(true);
+
+        const params = new URLSearchParams({ limit: '12' });
+        const normalizedTrack = normalizeTrackValue(trackFilter, 'all');
+        if (normalizedTrack !== 'all') {
+          params.set('track', normalizedTrack);
+        }
+
+        const response = await fetch(`${API_BASE}/product/recommendations?${params.toString()}`, {
+          headers: authHeaders(),
+          cache: 'no-store',
+        });
+        const data = await response.json();
+
+        if (!alive) {
+          return;
+        }
+
+        if (data.success && Array.isArray(data.data)) {
+          setRecommendedVideos(data.data);
+          return;
+        }
+
+        setRecommendedVideos([]);
+      } catch (error) {
+        console.error('Error loading recommendations:', error);
+        if (alive) {
+          setRecommendedVideos([]);
+        }
+      } finally {
+        if (alive) {
+          setLoadingRecommendations(false);
+        }
+      }
+    };
+
+    run();
+
+    return () => {
+      alive = false;
+    };
+  }, [trackFilter, currentUser?.id]);
+
+  useEffect(() => {
     const onStorage = (event) => {
       if (event.key === 'token' || event.key === 'user') {
         if (!localStorage.getItem('token')) {
@@ -476,6 +526,60 @@ const Library = () => {
             </div>
           </section>
         )}
+
+        <section>
+          <div className="glass-section-head mb-4">
+            <h2 className="glass-section-title text-xl">
+              <span className="material-symbols-outlined text-blue-600">auto_awesome</span>
+              Đề xuất cho bạn
+            </h2>
+            <span className="glass-status glass-status-neutral">
+              {trackFilter === 'english' ? 'Theo lộ trình tiếng Anh' : trackFilter === 'chinese' ? 'Theo lộ trình tiếng Trung' : 'Đa lộ trình'}
+            </span>
+          </div>
+
+          {loadingRecommendations ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {[1, 2, 3, 4].map((i) => <div key={i} className="h-52 glass-surface rounded-2xl animate-pulse" />)}
+            </div>
+          ) : recommendedVideos.length ? (
+            <div className="stagger-sequence grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {recommendedVideos.slice(0, 8).map((video) => (
+                <Link
+                  to={`/player/${video.id}`}
+                  key={`recommended-${video.id}`}
+                  className="stagger-item video-card glass-surface rounded-2xl border border-white/70 overflow-hidden glass-hover-lift"
+                >
+                  <div className="relative overflow-hidden">
+                    <VideoThumbnail
+                      thumbnailUrl={video.thumbnail_url}
+                      videoUrl={video.video_url}
+                      alt={video.title}
+                      className="w-full h-full aspect-video object-cover"
+                    />
+                    <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-2 py-1 rounded">{formatDuration(video.duration)}</div>
+                    <div className="absolute top-2 left-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white text-xs font-bold px-2 py-1 rounded">{getLevelLabel(getVideoTrack(video), video.hsk_level)}</div>
+                    <div className="absolute top-2 right-2 bg-white/85 text-blue-900 text-xs font-semibold px-2 py-1 rounded">{getVideoTrack(video) === 'english' ? 'English' : 'Chinese'}</div>
+                  </div>
+
+                  <div className="p-4 min-w-0">
+                    <h3 className="font-medium text-blue-950 line-clamp-2 mb-1">{video.title}</h3>
+                    <p className="text-sm text-glass-subtle line-clamp-1 mb-2">{video.title_cn || ''}</p>
+                    <div className="text-xs text-glass-subtle/80 flex items-center gap-2">
+                      <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">visibility</span>{Number(video.view_count || 0).toLocaleString()}</span>
+                      <span>{video.category_name || '-'}</span>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="glass-empty py-8">
+              <span className="material-symbols-outlined text-4xl">recommend</span>
+              <p className="mt-2">Chưa có dữ liệu đủ để gợi ý. Hãy xem vài video để nhận đề xuất tốt hơn.</p>
+            </div>
+          )}
+        </section>
 
         <section>
           <h2 className="glass-section-title text-xl mb-4">

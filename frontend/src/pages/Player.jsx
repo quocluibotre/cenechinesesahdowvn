@@ -902,18 +902,56 @@ const Player = () => {
   };
 
   const fetchRelated = async (categoryId, excludeVideoId, track) => {
+    const safeExcludeVideoId = Number(excludeVideoId || 0);
+    const normalizedTrack = normalizeTrackValue(track, 'all');
+
     try {
-      let url = `${API_BASE}/product?limit=6&status=published`;
+      const params = new URLSearchParams({ limit: '8' });
+
+      if (Number.isFinite(safeExcludeVideoId) && safeExcludeVideoId > 0) {
+        params.set('video_id', String(safeExcludeVideoId));
+      }
+
       if (categoryId) {
-        url += `&category=${categoryId}`;
+        params.set('category', String(categoryId));
       }
-      const normalizedTrack = normalizeTrackValue(track, 'all');
+
       if (normalizedTrack !== 'all') {
-        url += `&track=${normalizedTrack}`;
+        params.set('track', normalizedTrack);
       }
-      const response = await fetch(url);
+
+      const response = await fetch(`${API_BASE}/product/recommendations?${params.toString()}`, {
+        headers: getAuth(),
+        cache: 'no-store',
+      });
       const data = await response.json();
-      const list = (data.data || []).filter((item) => Number(item.id) !== Number(excludeVideoId)).slice(0, 4);
+
+      const list = (data.data || [])
+        .filter((item) => Number(item.id) !== safeExcludeVideoId)
+        .slice(0, 4);
+
+      if (list.length) {
+        setRelatedVideos(list);
+        return;
+      }
+    } catch (error) {
+      console.error('Error loading recommendations in player:', error);
+    }
+
+    try {
+      let fallbackUrl = `${API_BASE}/product?limit=6&status=published`;
+      if (categoryId) {
+        fallbackUrl += `&category=${categoryId}`;
+      }
+      if (normalizedTrack !== 'all') {
+        fallbackUrl += `&track=${normalizedTrack}`;
+      }
+
+      const response = await fetch(fallbackUrl);
+      const data = await response.json();
+      const list = (data.data || [])
+        .filter((item) => Number(item.id) !== safeExcludeVideoId)
+        .slice(0, 4);
       setRelatedVideos(list);
     } catch (error) {
       console.error('Error loading related videos:', error);

@@ -1,10 +1,13 @@
 const express = require('express');
-const { getVideos, getVideoById, deleteVideo, uploadVideo, updateVideo } = require('../controllers/product.controller');
-const { verifyToken, isAdmin } = require('../middleware/auth.middleware');
+const { getVideos, getVideoById, getRecommendedVideos, deleteVideo, uploadVideo, updateVideo } = require('../controllers/product.controller');
+const { verifyToken, optionalVerifyToken, isAdmin } = require('../middleware/auth.middleware');
 const router = express.Router();
 
 // Lấy danh sách video (tương ứng get_videos.php cũ)
 router.get('/', getVideos);
+
+// Gợi ý video theo ngữ cảnh hiện tại + lịch sử user (nếu có đăng nhập)
+router.get('/recommendations', optionalVerifyToken, getRecommendedVideos);
 
 // Lấy thông tin chi tiết video (tương ứng get_video.php cũ)
 router.get('/:id', getVideoById);

@@ -7,7 +7,9 @@ const TRANSLATE_ENGINE = String(process.env.YOUTUBE_TRANSLATE_ENGINE || 'fast').
 const TRANSLATE_CONCURRENCY = Math.max(1, Math.min(12, Number(process.env.YOUTUBE_TRANSLATE_CONCURRENCY || 6)));
 const TRANSLATE_TIMEOUT_MS = Math.max(3000, Number(process.env.YOUTUBE_TRANSLATE_TIMEOUT_MS || 12000));
 const TRANSLATE_ENDPOINT = String(process.env.YOUTUBE_TRANSLATE_ENDPOINT || 'https://translate.googleapis.com/translate_a/single').trim();
-const TRANSLATE_CONTEXT_GROUP = Math.max(1, Math.min(10, Number(process.env.YOUTUBE_TRANSLATE_CONTEXT_GROUP || 4)));
+const TRANSLATE_CONTEXT_GROUP = Math.max(1, Math.min(10, Number(process.env.YOUTUBE_TRANSLATE_CONTEXT_GROUP || 6)));
+const TRANSLATE_PRONOUN_STYLE = String(process.env.YOUTUBE_TRANSLATE_PRONOUN_STYLE || 'natural').trim().toLowerCase();
+const TRANSLATE_STYLE_HINT = String(process.env.YOUTUBE_TRANSLATE_STYLE_HINT || '').trim();
 const IDIOM_REWRITE_ENGINE = String(process.env.YOUTUBE_IDIOM_REWRITE_ENGINE || 'auto').trim().toLowerCase();
 const IDIOM_REWRITE_MAX_ITEMS = Math.max(0, Math.min(80, Number(process.env.YOUTUBE_IDIOM_REWRITE_MAX_ITEMS || 20)));
 const IDIOM_REWRITE_MODEL = String(process.env.YOUTUBE_IDIOM_REWRITE_MODEL || process.env.GEMINI_MODEL || 'gemini-2.0-flash').trim();
@@ -555,6 +557,43 @@ function normalizeTranslateEngine(value) {
     return 'fast';
 }
 
+function normalizePronounStyle(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+
+    if (['formal', 'neutral', 'toi-ban', 'toi_ban'].includes(normalized)) {
+        return 'formal';
+    }
+
+    if (['intimate', 'close', 'than-mat', 'than_mat', 'family', 'anh-em', 'chi-em'].includes(normalized)) {
+        return 'intimate';
+    }
+
+    return 'natural';
+}
+
+function buildPronounGuidelineLines(pronounStyle, styleHint = '') {
+    const lines = [
+        'Use contextual Vietnamese pronouns and keep relationship consistent across nearby lines.',
+        'Do not overuse "toi/ban" when the dialogue is informal, friendly, or family-like.',
+        'When context supports it, prefer natural pairs such as "anh/em", "chi/em", "co/chau", or equivalent roles.',
+        'If one line is ambiguous, infer from neighboring lines in this chunk and keep the chosen pairing stable.',
+        'Keep names, nicknames, and role titles consistent.',
+    ];
+
+    if (pronounStyle === 'formal') {
+        lines.push('Favor polite-neutral pronouns (toi/ban, toi/anh/chi) unless close relationship is explicit.');
+    } else if (pronounStyle === 'intimate') {
+        lines.push('Favor close conversational pronouns in friend/family contexts when reasonable.');
+    }
+
+    const safeHint = String(styleHint || '').trim();
+    if (safeHint) {
+        lines.push(`Additional style hint: ${safeHint}`);
+    }
+
+    return lines;
+}
+
 function normalizeLanguageTrack(value, fallback = 'english') {
     const normalized = String(value || '').trim().toLowerCase();
     if (['english', 'en', 'eng'].includes(normalized)) return 'english';
@@ -1094,8 +1133,20 @@ async function translateChunkWithGemini(chunk, attempt = 1) {
     const apiKey = process.env.GEMINI_API_KEY || '';
     const modelName = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-
-    const prompt = `Translate the 'en_text' field of each object in this JSON array to Vietnamese and add a 'vn_text' field. Keep all other fields unchanged. Return ONLY a valid JSON array with exactly ${chunk.length} objects. No markdown, no explanation.\nData: ${JSON.stringify(chunk)}`;
+    const pronounStyle = normalizePronounStyle(TRANSLATE_PRONOUN_STYLE);
+    const pronounGuidelines = buildPronounGuidelineLines(pronounStyle, TRANSLATE_STYLE_HINT);
+    const prompt = [
+        'You are a professional English-to-Vietnamese subtitle translator.',
+        'Translate the "en_text" field of each object into Vietnamese and add a "vn_text" field.',
+        'Keep all other fields unchanged and preserve object order.',
+        'Translation constraints:',
+        ...pronounGuidelines.map((line) => `- ${line}`),
+        '- Keep each subtitle concise, natural, and speakable.',
+        '- Prefer meaning-equivalent translation over word-by-word literal translation.',
+        `Return ONLY a strict JSON array with exactly ${chunk.length} objects.`,
+        'No markdown. No explanation.',
+        `Data: ${JSON.stringify(chunk)}`,
+    ].join('\n');
 
     try {
         console.log(`Calling Gemini REST (attempt ${attempt}, model: ${modelName}, chunk: ${chunk.length})...`);
