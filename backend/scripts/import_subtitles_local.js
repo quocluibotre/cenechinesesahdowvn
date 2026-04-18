@@ -748,12 +748,32 @@ function buildHeaders(token) {
     return headers;
 }
 
-async function resolveVideoLanguageTrack(apiBase, headers, videoId) {
+function inferTrackFromPreferredLang(preferredLang) {
+    const normalized = String(preferredLang || '').trim().toLowerCase();
+    if (!normalized) return '';
+
+    if (normalized.startsWith('en')) {
+        return 'english';
+    }
+
+    if (normalized.startsWith('zh') || normalized.startsWith('cn')) {
+        return 'chinese';
+    }
+
+    return '';
+}
+
+async function resolveVideoLanguageTrack(apiBase, headers, videoId, youtubeId = '') {
     const numericVideoId = Number(videoId);
     if (!Number.isFinite(numericVideoId) || numericVideoId <= 0) {
         return '';
     }
 
+    const safeYoutubeId = String(youtubeId || '').trim();
+
+    const normalizeRowTrack = (row) => normalizeLanguageTrack(row?.language_track, '');
+
+    // 1) Direct detail endpoint (fast path).
     try {
         const response = await axios.get(`${apiBase}/product/${numericVideoId}`, {
             headers,
@@ -761,11 +781,65 @@ async function resolveVideoLanguageTrack(apiBase, headers, videoId) {
         });
 
         const payload = response.data?.data || response.data || {};
-        return normalizeLanguageTrack(payload.language_track, '');
+        const detailTrack = normalizeRowTrack(payload);
+        if (detailTrack) {
+            return detailTrack;
+        }
     } catch (error) {
-        console.warn(`[import] cannot infer language_track for video_id=${numericVideoId}: ${error.message}`);
-        return '';
+        const status = Number(error?.response?.status || 0);
+        if (status && status !== 404) {
+            console.warn(`[import] cannot infer language_track via /product/${numericVideoId}: ${error.message}`);
+        }
     }
+
+    // 2) Paginated list fallback: find by id first, then youtube_id in video_url.
+    const pageSize = 100;
+    const maxPages = 12;
+    for (let page = 1; page <= maxPages; page += 1) {
+        try {
+            const response = await axios.get(`${apiBase}/product`, {
+                headers,
+                timeout: 30000,
+                params: {
+                    limit: pageSize,
+                    page,
+                },
+            });
+
+            const rows = Array.isArray(response.data?.data) ? response.data.data : [];
+            if (!rows.length) {
+                break;
+            }
+
+            const byId = rows.find((row) => Number(row?.id) === numericVideoId);
+            const byYoutube = safeYoutubeId
+                ? rows.find((row) => String(row?.video_url || '').includes(safeYoutubeId))
+                : null;
+            const matched = byId || byYoutube;
+
+            if (matched) {
+                const matchedTrack = normalizeRowTrack(matched);
+                if (matchedTrack) {
+                    return matchedTrack;
+                }
+                break;
+            }
+
+            const totalPages = Number(
+                response.data?.pagination?.totalPages
+                || response.data?.pagination?.total_pages
+                || 0
+            );
+            if (Number.isFinite(totalPages) && totalPages > 0 && page >= totalPages) {
+                break;
+            }
+        } catch (error) {
+            console.warn(`[import] cannot infer language_track via /product list page=${page}: ${error.message}`);
+            break;
+        }
+    }
+
+    return '';
 }
 
 function estimatePayloadBytes(payload) {
@@ -914,11 +988,14 @@ async function main() {
 
     let effectiveLanguageTrack = requestedLanguageTrack;
     if (!effectiveLanguageTrack) {
-        effectiveLanguageTrack = await resolveVideoLanguageTrack(apiBase, headers, videoId);
+        effectiveLanguageTrack = await resolveVideoLanguageTrack(apiBase, headers, videoId, youtubeId);
     }
 
     if (!effectiveLanguageTrack) {
-        effectiveLanguageTrack = 'english';
+        effectiveLanguageTrack = inferTrackFromPreferredLang(lang) || 'chinese';
+        console.warn(
+            `[import] cannot infer language_track for video_id=${videoId}; fallback transcript source track=${effectiveLanguageTrack}`
+        );
     }
 
     console.log(
