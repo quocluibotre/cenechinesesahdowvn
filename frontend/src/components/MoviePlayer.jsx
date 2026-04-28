@@ -27,6 +27,8 @@ const MoviePlayer = ({ imdbId, subtitles = [], title = '', showEn = true, showVi
   const iframeRef = useRef(null);
   const intervalRef = useRef(null);
   const lastPostMsgTime = useRef(0);
+  const startClockRef = useRef(null); // ref tới startClock để dùng trong closure
+
 
   const [showDebug, setShowDebug] = useState(false);
   const [debugMsgs, setDebugMsgs] = useState([]); // log postMessages để debug
@@ -99,25 +101,18 @@ const MoviePlayer = ({ imdbId, subtitles = [], title = '', showEn = true, showVi
 
 
       if (typeof t === 'number' && Number.isFinite(t) && t >= 0) {
-        // Recalibrate clock về đúng timestamp từ player
+        // Recalibrate: ch\u1ec9 c\u1ea7n update refs — interval t\u1ef1 \u0111\u1ecdc t\u1eeb refs
         baseElapsedRef.current = t;
         startTimeRef.current = performance.now();
         setElapsed(t);
         onTimeChange?.(t);
         lastPostMsgTime.current = Date.now();
         setUsingPostMsg(true);
-        setStarted(true); // luôn set — không có hại gì nếu đã true rồi
+        setStarted(true);
 
-        // Nếu clock chưa chạy → khởi động
+        // N\u1ebfu clock ch\u01b0a ch\u1ea1y → kh\u1edfi \u0111\u1ed9ng (ch\u1ec9 1 l\u1ea7n)
         if (!intervalRef.current) {
-          intervalRef.current = setInterval(() => {
-            if (startTimeRef.current !== null) {
-              const nowElapsed = baseElapsedRef.current + (performance.now() - startTimeRef.current) / 1000;
-              setElapsed(nowElapsed);
-              onTimeChange?.(nowElapsed);
-            }
-          }, 100);
-          setRunning(true);
+          startClockRef.current();
         }
       }
     };
@@ -142,19 +137,21 @@ const MoviePlayer = ({ imdbId, subtitles = [], title = '', showEn = true, showVi
   const startTimeRef = useRef(null); // performance.now() khi bắt đầu
   const baseElapsedRef = useRef(0);  // elapsed khi pause → resume từ điểm này
 
-  const startClock = useCallback((fromSeconds = null) => {
+  const startClock = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    const base = fromSeconds !== null ? fromSeconds : baseElapsedRef.current;
-    baseElapsedRef.current = base;
     startTimeRef.current = performance.now();
 
     intervalRef.current = setInterval(() => {
-      const nowElapsed = base + (performance.now() - startTimeRef.current) / 1000;
-      setElapsed(nowElapsed);
-      onTimeChange?.(nowElapsed);
-    }, 100); // 100ms interval — mượt hơn, chính xác hơn
+      // Đọc từ REF — không closure — nên STORAGE_SET luôn được phản ánh đúng
+      if (startTimeRef.current !== null) {
+        const nowElapsed = baseElapsedRef.current + (performance.now() - startTimeRef.current) / 1000;
+        setElapsed(nowElapsed);
+        onTimeChange?.(nowElapsed);
+      }
+    }, 100);
     setRunning(true);
   }, [onTimeChange]);
+  startClockRef.current = startClock; // luôn cập nhật ref sau mỗi render
 
   const pauseClock = useCallback(() => {
     if (intervalRef.current) {
@@ -188,29 +185,21 @@ const MoviePlayer = ({ imdbId, subtitles = [], title = '', showEn = true, showVi
   // ── Bắt đầu phim: click Play overlay ────────────────────────────────────────
   const handlePlayClick = useCallback(() => {
     setStarted(true);
-    setElapsed(0);
     setOffset(0);
+    // Không startClock tự tay — STORAGE_SET sẽ tự động recalibrate và khởi động clock
+    // Nhưng nếu muốn bắt đầu từ 0 luôn:
     baseElapsedRef.current = 0;
     startTimeRef.current = null;
 
     // Thử gửi play command tới iframe
     try {
-      const cmds = [
-        { method: 'play' },
-        { event: 'command', func: 'playVideo' },
-        'play',
-      ];
-      cmds.forEach((cmd) => {
+      [{ method: 'play' }, { event: 'command', func: 'playVideo' }, 'play'].forEach((cmd) => {
         iframeRef.current?.contentWindow?.postMessage(
-          typeof cmd === 'string' ? cmd : JSON.stringify(cmd),
-          '*'
+          typeof cmd === 'string' ? cmd : JSON.stringify(cmd), '*'
         );
       });
-    } catch { /* ignore cross-origin */ }
-
-    // Khởi động đồng hồ từ giây 0
-    startClock(0);
-  }, [startClock]);
+    } catch { /* ignore */ }
+  }, []);
 
   // Cleanup
   useEffect(() => () => {
