@@ -5,6 +5,8 @@ const db = require('../config/db.config');
 const OPENSUBTITLES_API_KEY = process.env.OPENSUBTITLES_API_KEY || '';
 const OPENSUBTITLES_API_BASE = 'https://api.opensubtitles.com/api/v1';
 const APP_USER_AGENT = process.env.OPENSUBTITLES_APP_NAME || 'CineShadow v1.0';
+const OMDB_API_KEY = process.env.OMDB_API_KEY || '8b7f7ee1';
+
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -490,6 +492,147 @@ exports.searchSubtitleCandidates = async (req, res) => {
     });
   } catch (error) {
     console.error('searchSubtitleCandidates error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ─── Helper: fetch JSON via https ─────────────────────────────────────────────
+const fetchJson = (url) => new Promise((resolve, reject) => {
+  const lib = url.startsWith('https') ? https : http;
+  lib.get(url, (res) => {
+    let data = '';
+    res.on('data', (c) => { data += c; });
+    res.on('end', () => {
+      try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+    });
+  }).on('error', reject);
+});
+
+/**
+ * POST /api/movie/auto-import
+ * Body: { imdb_url, category_id?, hsk_level?, is_published?, is_free? }
+ *
+ * One-shot flow:
+ *  1. Lấy thông tin phim từ OMDb (title, poster, plot)
+ *  2. Lưu video vào DB
+ *  3. Tự tìm + tải phụ đề EN + VI tốt nhất
+ */
+exports.autoImportMovie = async (req, res) => {
+  try {
+    const { imdb_url, category_id, hsk_level = 3, is_published = true, is_free = true } = req.body;
+
+    // 1. Extract IMDB ID
+    const imdbId = extractImdbId(imdb_url);
+    if (!imdbId) {
+      return res.status(400).json({ success: false, message: 'IMDB URL/ID không hợp lệ' });
+    }
+
+    // 2. Fetch OMDb
+    console.log(`[auto-import] Fetching OMDb for ${imdbId}...`);
+    const omdb = await fetchJson(
+      `https://www.omdbapi.com/?i=${imdbId}&apikey=${OMDB_API_KEY}&plot=full`
+    );
+
+    if (omdb.Response !== 'True') {
+      return res.status(404).json({ success: false, message: `OMDb: ${omdb.Error || 'Không tìm thấy phim'}` });
+    }
+
+    const title    = omdb.Title || imdbId;
+    const poster   = omdb.Poster !== 'N/A' ? omdb.Poster : '';
+    const plot     = omdb.Plot   !== 'N/A' ? omdb.Plot   : '';
+    const video_url = `imdb:${imdbId}`;
+
+    // 3. Insert video into DB (upsert by video_url to avoid duplicates)
+    const [[existing]] = await db.promise().query(
+      'SELECT id FROM videos WHERE video_url = ? LIMIT 1', [video_url]
+    );
+
+    let videoId;
+    if (existing) {
+      videoId = existing.id;
+      await db.promise().query(
+        `UPDATE videos SET title=?, title_cn=?, description=?, thumbnail_url=?,
+         category_id=?, hsk_level=?, is_published=?, is_free=?, updated_at=NOW() WHERE id=?`,
+        [title, title, plot, poster,
+         category_id ? Number(category_id) : null,
+         Number(hsk_level),
+         is_published ? 1 : 0,
+         is_free !== false ? 1 : 0,
+         videoId]
+      );
+      console.log(`[auto-import] Updated existing video #${videoId}`);
+    } else {
+      const [result] = await db.promise().query(
+        `INSERT INTO videos
+           (title, title_cn, description, category_id, hsk_level, language_track,
+            video_url, thumbnail_url, is_published, is_free, duration, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'english', ?, ?, ?, ?, 0, NOW(), NOW())`,
+        [title, title, plot,
+         category_id ? Number(category_id) : null,
+         Number(hsk_level),
+         video_url, poster,
+         is_published ? 1 : 0,
+         is_free !== false ? 1 : 0]
+      );
+      videoId = result.insertId;
+      console.log(`[auto-import] Inserted video #${videoId}`);
+    }
+
+    // 4. Import subtitles (auto-pick best EN + VI)
+    let subMessage = '';
+    if (OPENSUBTITLES_API_KEY) {
+      try {
+        const numericId = imdbId.replace('tt', '');
+
+        // EN
+        const enCandidates = await searchCandidates(numericId, 'en');
+        let enSubs = [], movieDuration = 0;
+        if (enCandidates.length) {
+          const enResult = await pickBestByDuration(enCandidates, 0);
+          if (enResult) {
+            enSubs = enResult.parsed;
+            movieDuration = enResult.duration;
+          }
+        }
+
+        // VI
+        let viSubs = [];
+        const viCandidates = await searchCandidates(numericId, 'vi');
+        if (viCandidates.length && movieDuration > 0) {
+          const viResult = await pickBestByDuration(viCandidates, movieDuration, 0.15, 4);
+          if (viResult) viSubs = viResult.parsed;
+        }
+
+        if (enSubs.length) {
+          const merged = mergeByTimeOverlap(enSubs, viSubs);
+          await db.promise().query('DELETE FROM subtitles WHERE video_id = ?', [videoId]);
+          const values = merged.map((s) => [videoId, s.start_time, s.end_time, s.text, s.vn_text || null]);
+          await db.promise().query(
+            'INSERT INTO subtitles (video_id, start_time, end_time, en_text, vn_text) VALUES ?', [values]
+          );
+          if (movieDuration > 0) {
+            await db.promise().query('UPDATE videos SET duration=? WHERE id=?', [Math.round(movieDuration), videoId]);
+          }
+          const viMatched = merged.filter((s) => s.vn_text).length;
+          subMessage = `Đã tải ${merged.length} dòng EN${viSubs.length ? ` + ${viMatched} dòng VI` : ''}`;
+        } else {
+          subMessage = 'Không tìm thấy phụ đề EN';
+        }
+      } catch (subErr) {
+        console.error('[auto-import] subtitle error:', subErr.message);
+        subMessage = `Lỗi phụ đề: ${subErr.message}`;
+      }
+    } else {
+      subMessage = 'Bỏ qua phụ đề (chưa cấu hình OPENSUBTITLES_API_KEY)';
+    }
+
+    return res.json({
+      success: true,
+      message: `✅ Đã thêm "${title}" — ${subMessage}`,
+      data: { id: videoId, imdb_id: imdbId, title, thumbnail_url: poster },
+    });
+  } catch (error) {
+    console.error('autoImportMovie error:', error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };

@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const movieController = require('../controllers/movie.controller');
 
+// One-shot: fetch OMDb + luu DB + import subtitle
+router.post('/auto-import', movieController.autoImportMovie);
+
 // Lưu phim IMDB vào DB (video_url = "imdb:tt...")
 router.post('/process', movieController.processImdbMovie);
 
