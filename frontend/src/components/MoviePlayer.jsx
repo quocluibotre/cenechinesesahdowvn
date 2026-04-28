@@ -99,16 +99,16 @@ const MoviePlayer = ({ imdbId, subtitles = [], title = '', showEn = true, showVi
 
 
       if (typeof t === 'number' && Number.isFinite(t) && t >= 0) {
-        // Recalibrate internal clock về đúng timestamp từ player
-        // KHÔNG stop clock — clock tiếp tục chạy mượt giữa 2 lần STORAGE_SET (~5s)
+        // Recalibrate clock về đúng timestamp từ player
         baseElapsedRef.current = t;
         startTimeRef.current = performance.now();
         setElapsed(t);
         onTimeChange?.(t);
         lastPostMsgTime.current = Date.now();
         setUsingPostMsg(true);
+        setStarted(true); // luôn set — không có hại gì nếu đã true rồi
 
-        // Nếu clock chưa chạy → khởi động (lần đầu nhận postMessage)
+        // Nếu clock chưa chạy → khởi động
         if (!intervalRef.current) {
           intervalRef.current = setInterval(() => {
             if (startTimeRef.current !== null) {
@@ -119,14 +119,12 @@ const MoviePlayer = ({ imdbId, subtitles = [], title = '', showEn = true, showVi
           }, 100);
           setRunning(true);
         }
-
-        if (!started) setStarted(true);
       }
     };
 
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [onTimeChange, started]);
+  }, [onTimeChange]); // ← bỏ 'started' ra khỏi deps để tránh effect re-run xóa interval
 
   // Kiểm tra nếu postMessage ngừng gửi (player paused / không hỗ trợ)
   // Sau 3 giây không nhận → chuyển về đồng hồ nội bộ nếu đang running
