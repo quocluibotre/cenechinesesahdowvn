@@ -232,12 +232,31 @@ const MoviePlayer = ({ imdbId, subtitles = [], title = '', showEn = true, showVi
     return () => document.removeEventListener('fullscreenchange', onFSChange);
   }, []);
 
-  // ── Phụ đề hiện tại ─────────────────────────────────────────────────────────
+  // ── Phụ đề hiện tại + linger 0.3s sau end_time ─────────────────────────────
+  const LINGER_MS = 300; // giữ phụ đề thêm 0.3s sau end_time — tránh flash đột ngột
+  const lastSubRef = useRef(null);
+  const lastSubEndRef = useRef(0);
+
   const currentSub = useMemo(() => {
     if (!subtitles.length) return null;
-    return subtitles.find(
-      (s) => effectiveTime >= Number(s.start_time) && effectiveTime <= Number(s.end_time)
-    ) || null;
+    const et = effectiveTime;
+    const active = subtitles.find(
+      (s) => et >= Number(s.start_time) && et <= Number(s.end_time)
+    );
+    if (active) {
+      lastSubRef.current = active;
+      lastSubEndRef.current = Number(active.end_time);
+      return active;
+    }
+    // Linger: nếu đang trong khoảng LINGER sau end_time thì giữ phụ đề cũ
+    if (
+      lastSubRef.current &&
+      et > lastSubEndRef.current &&
+      et <= lastSubEndRef.current + LINGER_MS / 1000
+    ) {
+      return lastSubRef.current;
+    }
+    return null;
   }, [subtitles, effectiveTime]);
 
   // ── Format time ─────────────────────────────────────────────────────────────
@@ -286,17 +305,21 @@ const MoviePlayer = ({ imdbId, subtitles = [], title = '', showEn = true, showVi
           </div>
         )}
 
-        {/* Subtitle overlay */}
-        {started && (showEn || showVi) && currentSub && (
-          <div className={`absolute left-0 right-0 px-4 pointer-events-none flex flex-col items-center gap-1 z-10 ${isFullscreen ? 'bottom-16' : 'bottom-10'}`}>
-            {showEn && currentSub.en_text && (
+        {/* Subtitle overlay — fade in/out */}
+        {started && (showEn || showVi) && (
+          <div
+            className={`absolute left-0 right-0 px-4 pointer-events-none flex flex-col items-center gap-1 z-10 transition-opacity duration-300 ${
+              isFullscreen ? 'bottom-16' : 'bottom-10'
+            } ${currentSub ? 'opacity-100' : 'opacity-0'}`}
+          >
+            {showEn && (currentSub?.en_text) && (
               <div className="inline-block max-w-[90%] text-center">
                 <span className={`bg-black/75 text-white font-bold leading-snug px-3 py-1 rounded-md drop-shadow-lg ${isFullscreen ? 'text-xl sm:text-2xl md:text-3xl' : 'text-sm sm:text-base md:text-lg lg:text-xl'}`}>
                   {currentSub.en_text}
                 </span>
               </div>
             )}
-            {showVi && currentSub.vn_text && (
+            {showVi && (currentSub?.vn_text) && (
               <div className="inline-block max-w-[90%] text-center">
                 <span className={`bg-black/65 text-yellow-300 font-semibold leading-snug px-3 py-0.5 rounded-md drop-shadow-lg ${isFullscreen ? 'text-base sm:text-lg md:text-xl' : 'text-xs sm:text-sm md:text-base'}`}>
                   {currentSub.vn_text}
@@ -323,6 +346,36 @@ const MoviePlayer = ({ imdbId, subtitles = [], title = '', showEn = true, showVi
       {!started && subtitles.length === 0 && (
         <div className="px-3 py-2 rounded-xl bg-amber-50/60 border border-amber-200/50 text-xs text-amber-700">
           ⚠️ Chưa có phụ đề — Admin vào tab <strong>Thêm Phim (IMDB)</strong> để tải phụ đề từ OpenSubtitles.
+        </div>
+      )}
+
+      {/* Mini offset bar — chỉ hiện khi đang xem, nhỏ gọn */}
+      {started && subtitles.length > 0 && (
+        <div className="flex items-center justify-center gap-2 py-1">
+          <span className="text-[11px] text-glass-subtle">Phụ đề lệch?</span>
+          {[-5, -1].map((d) => (
+            <button key={d} onClick={() => setOffset((o) => +(o + d).toFixed(1))}
+              className="px-2 py-0.5 rounded text-[11px] font-mono bg-rose-100/60 text-rose-700 hover:bg-rose-200/70 transition">
+              {d}s
+            </button>
+          ))}
+          {offset !== 0 && (
+            <span className="font-mono text-[11px] text-blue-700 bg-white/60 px-1.5 rounded">
+              {offset > 0 ? `+${offset.toFixed(1)}` : `${offset.toFixed(1)}`}s
+            </span>
+          )}
+          {[1, 5].map((d) => (
+            <button key={d} onClick={() => setOffset((o) => +(o + d).toFixed(1))}
+              className="px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-100/60 text-emerald-700 hover:bg-emerald-200/70 transition">
+              +{d}s
+            </button>
+          ))}
+          {offset !== 0 && (
+            <button onClick={() => setOffset(0)}
+              className="px-2 py-0.5 rounded text-[11px] text-gray-500 bg-white/40 hover:bg-white/70 transition">
+              Reset
+            </button>
+          )}
         </div>
       )}
 
