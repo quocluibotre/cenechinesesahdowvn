@@ -1590,9 +1590,16 @@ const Player = () => {
 
   useEffect(() => {
     if (!sentenceListRef.current || currentSubtitleIndex < 0) return;
-    const target = sentenceListRef.current.querySelector(`[data-sub-idx="${currentSubtitleIndex}"]`);
-    if (target) {
-      target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const container = sentenceListRef.current;
+    const target = container.querySelector(`[data-sub-idx="${currentSubtitleIndex}"]`);
+    if (!target) return;
+    // Scroll trong container — KHÔNG dùng scrollIntoView vì nó cuộn cả trang trên mobile
+    const cTop = container.scrollTop;
+    const cBottom = cTop + container.clientHeight;
+    const tTop = target.offsetTop;
+    const tBottom = tTop + target.offsetHeight;
+    if (tTop < cTop || tBottom > cBottom) {
+      container.scrollTo({ top: tTop - container.clientHeight / 2 + target.offsetHeight / 2, behavior: 'smooth' });
     }
   }, [currentSubtitleIndex]);
 

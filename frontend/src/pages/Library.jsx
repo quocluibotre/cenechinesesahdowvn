@@ -361,7 +361,7 @@ const Library = () => {
   const levelFilterLabel = trackFilter === 'english' ? 'Tất cả level' : 'Tất cả cấp độ';
 
   return (
-    <div className="min-h-screen pb-8 sm:pb-10 text-glass-main relative">
+    <div className="min-h-screen pb-8 sm:pb-10 text-glass-main relative overflow-x-hidden">
       <div className="absolute top-20 left-[-4rem] w-44 h-44 bg-blue-300/35 blur-3xl rounded-full pointer-events-none" />
       <div className="absolute bottom-8 right-[-4rem] w-52 h-52 bg-cyan-300/35 blur-3xl rounded-full pointer-events-none" />
 
@@ -421,24 +421,25 @@ const Library = () => {
 
       <main className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-6 space-y-6 sm:space-y-8">
         <section className="glass-surface-strong rounded-2xl sm:rounded-3xl p-4 sm:p-6 border border-white/75">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold mb-1 text-blue-950">Chào mừng trở lại!</h1>
-              <p className="text-glass-subtle">{activeTrackHeading}</p>
+              <h1 className="text-xl sm:text-3xl font-bold mb-0.5 text-blue-950">Chào mừng trở lại!</h1>
+              <p className="text-sm text-glass-subtle">{activeTrackHeading}</p>
             </div>
 
-            <div className="grid grid-cols-1 min-[500px]:grid-cols-3 gap-2.5 sm:gap-3 w-full md:w-auto md:min-w-[420px]">
-              <div className="glass-kpi-card p-3 sm:p-4">
-                <div className="text-xs text-glass-subtle">Video đã xem</div>
-                <div className="text-xl min-[420px]:text-2xl sm:text-3xl font-bold text-blue-900 mt-1">{stats?.videos_watched ?? '-'}</div>
+            {/* KPI cards: luôn 3 cột, compact hơn trên mobile */}
+            <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full sm:w-auto sm:min-w-[320px]">
+              <div className="glass-kpi-card p-2.5 sm:p-4 text-center sm:text-left">
+                <div className="text-[10px] sm:text-xs text-glass-subtle leading-tight">Video đã xem</div>
+                <div className="text-lg sm:text-3xl font-bold text-blue-900 mt-0.5">{stats?.videos_watched ?? '-'}</div>
               </div>
-              <div className="glass-kpi-card p-3 sm:p-4">
-                <div className="text-xs text-glass-subtle">Từ vựng lưu</div>
-                <div className="text-xl min-[420px]:text-2xl sm:text-3xl font-bold text-blue-900 mt-1">{stats?.saved_words ?? '-'}</div>
+              <div className="glass-kpi-card p-2.5 sm:p-4 text-center sm:text-left">
+                <div className="text-[10px] sm:text-xs text-glass-subtle leading-tight">Từ vựng lưu</div>
+                <div className="text-lg sm:text-3xl font-bold text-blue-900 mt-0.5">{stats?.saved_words ?? '-'}</div>
               </div>
-              <div className="glass-kpi-card p-3 sm:p-4">
-                <div className="text-xs text-glass-subtle">Ngày liên tục</div>
-                <div className="text-xl min-[420px]:text-2xl sm:text-3xl font-bold text-blue-900 mt-1">{stats?.streak ?? '-'}</div>
+              <div className="glass-kpi-card p-2.5 sm:p-4 text-center sm:text-left">
+                <div className="text-[10px] sm:text-xs text-glass-subtle leading-tight">Ngày liên tục</div>
+                <div className="text-lg sm:text-3xl font-bold text-blue-900 mt-0.5">{stats?.streak ?? '-'}</div>
               </div>
             </div>
           </div>
