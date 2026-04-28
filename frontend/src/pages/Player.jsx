@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import UserPanelDrawer from '../components/layout/UserPanelDrawer';
 import VideoThumbnail from '../components/ui/VideoThumbnail';
+import MoviePlayer from '../components/MoviePlayer';
 import { API_BASE } from '../utils/apiBase';
 
 const API_ORIGIN = API_BASE.endsWith('/api') ? API_BASE.slice(0, -4) : API_BASE;
@@ -373,6 +374,13 @@ const extractYouTubeId = (url) => {
   if (!url) return null;
   const match = url.match(/(?:youtu\.be\/|v=|embed\/)([^#&?]{11})/);
   return match ? match[1] : null;
+};
+
+// Trích xuất IMDB ID từ video_url dạng "imdb:tt12042730"
+const extractImdbId = (url) => {
+  if (!url) return null;
+  const m = String(url).match(/^imdb:(tt\d+)$/);
+  return m ? m[1] : null;
 };
 
 // Component hiển thị phụ đề với highlight từng chữ theo YouTube style
@@ -1323,7 +1331,20 @@ const Player = () => {
 
         // Kiểm tra xem là video YouTube không
         const ytId = extractYouTubeId(payload.video_url);
-        if (ytId) {
+        const imdbId = extractImdbId(payload.video_url);
+
+        if (imdbId) {
+          // Phim IMDB: load phụ đề từ /api/movie/subtitles/:id
+          try {
+            const subRes = await fetch(`${API_BASE}/movie/subtitles/${payload.id}`);
+            const subData = await subRes.json();
+            if (subData.success && Array.isArray(subData.data)) {
+              setDbSubtitles(subData.data);
+            }
+          } catch (e) {
+            console.error('Error loading movie subtitles:', e);
+          }
+        } else if (ytId) {
           // Load phụ đề từ database cho video YouTube
           try {
             const subRes = await fetch(`${API_BASE}/youtube/subtitles/${payload.id}`);
@@ -1763,121 +1784,138 @@ const Player = () => {
 
       <main className="max-w-7xl mx-auto px-3 sm:px-4 pt-3 sm:pt-6 grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6">
         <section className="xl:col-span-2 space-y-4">
-          <div 
-            ref={playerContainerRef}
-            className="rounded-xl sm:rounded-2xl overflow-hidden bg-black relative shadow-lg group aspect-video"
-            onMouseEnter={() => setShowControls(true)}
-            onMouseLeave={() => isPlaying && setShowControls(false)}
-            onTouchStart={() => setShowControls(true)}
-            onMouseMove={() => { setShowControls(true); clearTimeout(window.controlsTimeout); window.controlsTimeout = setTimeout(() => isPlaying && setShowControls(false), 2500); }}
-          >
-            {extractYouTubeId(videoData.video_url) ? (
-              <div className="absolute inset-0 w-full h-full pointer-events-none overflow-hidden">
-                <iframe
-                  id="yt-iframe-player"
-                  className="w-[110%] h-[110%] -ml-[5%] -mt-[5%]" 
-                  src={`https://www.youtube.com/embed/${extractYouTubeId(videoData.video_url)}?enablejsapi=1&rel=0&modestbranding=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&playsinline=1`}
-                  title={videoData.title}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
+          {extractImdbId(videoData.video_url) ? (
+            /* ── Phim IMDB: MoviePlayer tự quản lý iframe + phụ đề + controls ── */
+            <MoviePlayer
+              imdbId={extractImdbId(videoData.video_url)}
+              subtitles={dbSubtitles}
+              title={videoData.title}
+              showEn={showCn}
+              showVi={showVi}
+              onTimeChange={(t) => {
+                setCurrentTime(t);
+                setWatchedSeconds((prev) => Math.max(prev, Math.floor(t)));
+              }}
+            />
+          ) : (
+            /* ── Video thường / YouTube ── */
+            <div
+              ref={playerContainerRef}
+              className="rounded-xl sm:rounded-2xl overflow-hidden bg-black relative shadow-lg group aspect-video"
+              onMouseEnter={() => setShowControls(true)}
+              onMouseLeave={() => isPlaying && setShowControls(false)}
+              onTouchStart={() => setShowControls(true)}
+              onMouseMove={() => { setShowControls(true); clearTimeout(window.controlsTimeout); window.controlsTimeout = setTimeout(() => isPlaying && setShowControls(false), 2500); }}
+            >
+              {extractYouTubeId(videoData.video_url) ? (
+                <div className="absolute inset-0 w-full h-full pointer-events-none overflow-hidden">
+                  <iframe
+                    id="yt-iframe-player"
+                    className="w-[110%] h-[110%] -ml-[5%] -mt-[5%]"
+                    src={`https://www.youtube.com/embed/${extractYouTubeId(videoData.video_url)}?enablejsapi=1&rel=0&modestbranding=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&playsinline=1`}
+                    title={videoData.title}
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+                </div>
+              ) : (
+                <video
+                  ref={videoRef}
+                  src={videoData.video_url}
+                  className="w-full h-full object-contain cursor-pointer"
+                  preload="metadata"
+                  onClick={togglePlay}
                 />
+              )}
+
+              {extractYouTubeId(videoData.video_url) && (
+                <div className="absolute inset-0 z-10 cursor-pointer" onClick={togglePlay}></div>
+              )}
+
+              {/* Thumbnail Overlay to block YouTube's native UI before playing starts */}
+              {extractYouTubeId(videoData.video_url) && !isPlaying && currentTime === 0 && (
+                <div className="absolute inset-0 z-15 bg-black cursor-pointer flex flex-col items-center justify-center transition-opacity duration-300 pointer-events-auto" onClick={togglePlay}>
+                  <img src={videoData.thumbnail_url} alt="Cover" className="absolute inset-0 w-full h-full object-cover opacity-70" />
+                  <div className="relative z-20 w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(37,99,235,0.7)] hover:bg-blue-500 hover:scale-105 transition-transform duration-200">
+                    <span className="material-symbols-outlined text-white text-4xl ml-1">play_arrow</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Overlay phụ đề 2 dòng chung */}
+              <div className={`absolute bottom-2 sm:bottom-4 md:bottom-8 left-0 right-0 px-2.5 sm:px-4 pb-2 sm:pb-4 pt-6 sm:pt-8 pointer-events-none text-center z-20 transition-opacity duration-300 ${(!showControls && isPlaying) ? 'opacity-100' : ''}`}>
+                {showCn && currentCnSubtitle && (
+                  <div className="inline-block max-w-[96%] sm:max-w-[94%] text-white font-bold text-sm min-[420px]:text-base sm:text-lg md:text-xl lg:text-2xl leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)] mb-1">
+                    {extractYouTubeId(videoData.video_url) && currentCnSubtitle.words ? (
+                       <WordHighlight text={currentCnSubtitle.text} words={currentCnSubtitle.words} currentTime={currentTime} />
+                    ) : sanitizeSubtitleText(currentCnSubtitle.text)}
+                  </div>
+                )}
+                {showVi && currentViSubtitle && (
+                  <div className="block w-full max-w-[96%] sm:max-w-[94%] mx-auto text-[#f1c40f] font-semibold text-[11px] min-[420px]:text-xs sm:text-sm md:text-base mt-1 leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)]">
+                    {sanitizeSubtitleText(currentViSubtitle.text, 170)}
+                  </div>
+                )}
+                {showPinyin && currentPinyinSubtitle && (
+                    <div className="block w-full max-w-[96%] sm:max-w-[94%] mx-auto text-blue-200 font-medium text-[10px] min-[420px]:text-[11px] sm:text-xs md:text-sm mt-1 leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)]">{sanitizeSubtitleText(currentPinyinSubtitle.text, 170)}</div>
+                )}
               </div>
-            ) : (
-              <video
-                ref={videoRef}
-                src={videoData.video_url}
-                className="w-full h-full object-contain cursor-pointer"
-                preload="metadata"
-                onClick={togglePlay}
-              />
-            )}
 
-            {extractYouTubeId(videoData.video_url) && (
-              <div className="absolute inset-0 z-10 cursor-pointer" onClick={togglePlay}></div>
-            )}
-
-            {/* Thumbnail Overlay to block YouTube's native UI before playing starts */}
-            {extractYouTubeId(videoData.video_url) && !isPlaying && currentTime === 0 && (
-              <div className="absolute inset-0 z-15 bg-black cursor-pointer flex flex-col items-center justify-center transition-opacity duration-300 pointer-events-auto" onClick={togglePlay}>
-                <img src={videoData.thumbnail_url} alt="Cover" className="absolute inset-0 w-full h-full object-cover opacity-70" />
-                <div className="relative z-20 w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(37,99,235,0.7)] hover:bg-blue-500 hover:scale-105 transition-transform duration-200">
-                  <span className="material-symbols-outlined text-white text-4xl ml-1">play_arrow</span>
-                </div>
-              </div>
-            )}
-
-            {/* Overlay phụ đề 2 dòng chung */}
-            <div className={`absolute bottom-2 sm:bottom-4 md:bottom-8 left-0 right-0 px-2.5 sm:px-4 pb-2 sm:pb-4 pt-6 sm:pt-8 pointer-events-none text-center z-20 transition-opacity duration-300 ${(!showControls && isPlaying) ? 'opacity-100' : ''}`}>
-              {showCn && currentCnSubtitle && (
-                <div className="inline-block max-w-[96%] sm:max-w-[94%] text-white font-bold text-sm min-[420px]:text-base sm:text-lg md:text-xl lg:text-2xl leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)] mb-1">
-                  {extractYouTubeId(videoData.video_url) && currentCnSubtitle.words ? (
-                     <WordHighlight text={currentCnSubtitle.text} words={currentCnSubtitle.words} currentTime={currentTime} />
-                  ) : sanitizeSubtitleText(currentCnSubtitle.text)}
-                </div>
-              )}
-              {showVi && currentViSubtitle && (
-                <div className="block w-full max-w-[96%] sm:max-w-[94%] mx-auto text-[#f1c40f] font-semibold text-[11px] min-[420px]:text-xs sm:text-sm md:text-base mt-1 leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)]">
-                  {sanitizeSubtitleText(currentViSubtitle.text, 170)}
-                </div>
-              )}
-              {showPinyin && currentPinyinSubtitle && (
-                  <div className="block w-full max-w-[96%] sm:max-w-[94%] mx-auto text-blue-200 font-medium text-[10px] min-[420px]:text-[11px] sm:text-xs md:text-sm mt-1 leading-snug break-words drop-shadow-[0_2px_5px_rgba(0,0,0,1)]">{sanitizeSubtitleText(currentPinyinSubtitle.text, 170)}</div>
-              )}
-            </div>
-
-            {/* Custom Control Bar */}
-            <div className={`absolute bottom-0 left-0 right-0 p-2.5 sm:p-3 pt-10 sm:pt-12 bg-gradient-to-t from-black/90 to-transparent z-30 transition-opacity duration-300 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-               <div className="text-white px-1 sm:px-2 space-y-2.5">
-                 <div className="flex items-center justify-center gap-2.5 sm:gap-4">
-                   <button onClick={() => stepMediaBy(-10)} className="hover:text-blue-400 transition" title="Lùi 10 giây">
-                     <span className="material-symbols-outlined text-2xl sm:text-3xl">replay_10</span>
-                   </button>
-                   <button onClick={togglePlay} className="hover:text-blue-400 transition">
-                     <span className="material-symbols-outlined text-2xl sm:text-3xl">{isPlaying ? 'pause' : 'play_arrow'}</span>
-                   </button>
-                   <button onClick={() => stepMediaBy(10)} className="hover:text-blue-400 transition" title="Tiến 10 giây">
-                     <span className="material-symbols-outlined text-2xl sm:text-3xl">forward_10</span>
-                   </button>
-                 </div>
-
-                 <div className="flex items-center gap-2 sm:gap-3">
-                   <div className="flex-1 h-1.5 bg-white/30 rounded-full cursor-pointer relative group/progress" onClick={(e) => {
-                       const rect = e.currentTarget.getBoundingClientRect();
-                       const percent = (e.clientX - rect.left) / rect.width;
-                       const newTime = percent * duration;
-                      seekMediaTo(newTime);
-                   }}>
-                      <div className="absolute top-0 left-0 h-full bg-[#ff0000] rounded-full relative" style={{ width: `${(currentTime/duration)*100 || 0}%` }}>
-                          <div className="absolute right-0 top-1/2 -mt-1.5 w-3 h-3 bg-white rounded-full shadow opacity-0 group-hover/progress:opacity-100 transform translate-x-1/2"></div>
-                      </div>
-                   </div>
-
-                   <div className="text-[11px] sm:text-sm font-medium tabular-nums whitespace-nowrap">{toDuration(currentTime)} / {toDuration(duration)}</div>
-
-                   <div className="flex items-center justify-end gap-1.5 min-w-[68px] sm:min-w-[140px]">
-                     <button onClick={toggleMute} className="hover:text-blue-400 transition" title={isMuted ? 'Bật tiếng' : 'Tắt tiếng'}>
-                       <span className="material-symbols-outlined text-xl sm:text-2xl">{getVolumeIcon()}</span>
+              {/* Custom Control Bar */}
+              <div className={`absolute bottom-0 left-0 right-0 p-2.5 sm:p-3 pt-10 sm:pt-12 bg-gradient-to-t from-black/90 to-transparent z-30 transition-opacity duration-300 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                 <div className="text-white px-1 sm:px-2 space-y-2.5">
+                   <div className="flex items-center justify-center gap-2.5 sm:gap-4">
+                     <button onClick={() => stepMediaBy(-10)} className="hover:text-blue-400 transition" title="Lùi 10 giây">
+                       <span className="material-symbols-outlined text-2xl sm:text-3xl">replay_10</span>
                      </button>
-                     <input
-                       type="range"
-                       min="0"
-                       max="1"
-                       step="0.01"
-                       value={volume}
-                       onChange={(e) => setMediaVolume(Number(e.target.value))}
-                       className="hidden sm:block w-24 accent-blue-500 cursor-pointer"
-                       aria-label="Âm lượng"
-                     />
-                     <span className="hidden sm:inline text-xs text-white/80 tabular-nums w-9 text-right">{Math.round(volume * 100)}%</span>
+                     <button onClick={togglePlay} className="hover:text-blue-400 transition">
+                       <span className="material-symbols-outlined text-2xl sm:text-3xl">{isPlaying ? 'pause' : 'play_arrow'}</span>
+                     </button>
+                     <button onClick={() => stepMediaBy(10)} className="hover:text-blue-400 transition" title="Tiến 10 giây">
+                       <span className="material-symbols-outlined text-2xl sm:text-3xl">forward_10</span>
+                     </button>
                    </div>
 
-                   <button onClick={toggleFullscreen} className="hover:text-blue-400 transition">
-                     <span className="material-symbols-outlined text-xl sm:text-2xl">{!document.fullscreenElement?'fullscreen':'fullscreen_exit'}</span>
-                   </button>
+                   <div className="flex items-center gap-2 sm:gap-3">
+                     <div className="flex-1 h-1.5 bg-white/30 rounded-full cursor-pointer relative group/progress" onClick={(e) => {
+                         const rect = e.currentTarget.getBoundingClientRect();
+                         const percent = (e.clientX - rect.left) / rect.width;
+                         const newTime = percent * duration;
+                        seekMediaTo(newTime);
+                     }}>
+                        <div className="absolute top-0 left-0 h-full bg-[#ff0000] rounded-full relative" style={{ width: `${(currentTime/duration)*100 || 0}%` }}>
+                            <div className="absolute right-0 top-1/2 -mt-1.5 w-3 h-3 bg-white rounded-full shadow opacity-0 group-hover/progress:opacity-100 transform translate-x-1/2"></div>
+                        </div>
+                     </div>
+
+                     <div className="text-[11px] sm:text-sm font-medium tabular-nums whitespace-nowrap">{toDuration(currentTime)} / {toDuration(duration)}</div>
+
+                     <div className="flex items-center justify-end gap-1.5 min-w-[68px] sm:min-w-[140px]">
+                       <button onClick={toggleMute} className="hover:text-blue-400 transition" title={isMuted ? 'Bật tiếng' : 'Tắt tiếng'}>
+                         <span className="material-symbols-outlined text-xl sm:text-2xl">{getVolumeIcon()}</span>
+                       </button>
+                       <input
+                         type="range"
+                         min="0"
+                         max="1"
+                         step="0.01"
+                         value={volume}
+                         onChange={(e) => setMediaVolume(Number(e.target.value))}
+                         className="hidden sm:block w-24 accent-blue-500 cursor-pointer"
+                         aria-label="Âm lượng"
+                       />
+                       <span className="hidden sm:inline text-xs text-white/80 tabular-nums w-9 text-right">{Math.round(volume * 100)}%</span>
+                     </div>
+
+                     <button onClick={toggleFullscreen} className="hover:text-blue-400 transition">
+                       <span className="material-symbols-outlined text-xl sm:text-2xl">{!document.fullscreenElement?'fullscreen':'fullscreen_exit'}</span>
+                     </button>
+                   </div>
                  </div>
-               </div>
+              </div>
             </div>
-          </div>
+          )}
+
 
           <div className="glass-surface rounded-2xl p-3 sm:p-4 border border-white/70">
             <div className="flex flex-wrap gap-2 items-center">
