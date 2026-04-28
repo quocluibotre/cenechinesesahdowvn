@@ -1657,370 +1657,265 @@ const Admin = () => {
 
         {/* ══════════════ IMDB MOVIE TAB ══════════════ */}
         {activeTab === 'movie' && (
-          <section className="glass-surface-strong rounded-2xl border border-white/70 p-4 sm:p-6 space-y-6">
+          <section className="glass-surface-strong rounded-2xl border border-white/70 p-4 sm:p-6 space-y-5">
             <div className="glass-section-head">
               <h2 className="glass-section-title">
                 <span className="material-symbols-outlined text-purple-500">theaters</span>
-                Thêm Phìm Dài (IMDB + OpenSubtitles)
+                Thêm Phim Dài (IMDB)
               </h2>
+              <span className="glass-status glass-status-neutral text-[10px]">OMDb + OpenSubtitles</span>
             </div>
 
-            {/* Bước 1: Thông tin phìm */}
-            <div className="space-y-4">
-              <h3 className="text-sm font-bold text-purple-800 flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-purple-600 text-white text-xs flex items-center justify-center font-bold">1</span>
-                Thông tin phìm
-              </h3>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="md:col-span-2">
-                  <label className="text-xs font-semibold text-blue-800 mb-1 block">IMDB URL *</label>
-                  <input
-                    id="movie-imdb-url"
-                    className="glass-input px-3 py-2.5 rounded-xl w-full text-sm"
-                    placeholder="https://www.imdb.com/title/tt12042730/"
-                    value={movieForm.imdb_url}
-                    onChange={(e) => setMovieForm((p) => ({ ...p, imdb_url: e.target.value }))}
-                  />
-                  <p className="text-xs text-glass-subtle mt-1">Dán link IMDB — tự động tải thông tin phim từ OMDb</p>
-
-                  {/* OMDb preview */}
-                  {omdbLoading && (
-                    <div className="mt-2 flex items-center gap-2 text-xs text-purple-700 animate-pulse">
-                      <span className="material-symbols-outlined text-sm">hourglass_top</span>
-                      Đang tải thông tin phim từ OMDb...
-                    </div>
-                  )}
-                  {omdbData && !omdbLoading && (
-                    omdbData.error ? (
-                      <div className="mt-2 text-xs text-rose-600 flex items-center gap-1">
-                        <span className="material-symbols-outlined text-sm">error</span>
-                        {omdbData.error}
-                      </div>
-                    ) : (
-                      <div className="mt-3 rounded-xl border border-purple-200/60 bg-purple-50/40 p-3 flex gap-3">
-                        {omdbData.Poster && omdbData.Poster !== 'N/A' && (
-                          <img src={omdbData.Poster} alt="poster" className="w-16 rounded-lg object-cover shrink-0 shadow" />
-                        )}
-                        <div className="flex-1 min-w-0 space-y-1">
-                          <div className="font-bold text-sm text-blue-900 truncate">{omdbData.Title} <span className="font-normal text-glass-subtle">({omdbData.Year})</span></div>
-                          <div className="flex flex-wrap gap-1">
-                            {omdbData.Genre?.split(',').map((g) => (
-                              <span key={g} className="text-[10px] px-1.5 py-0.5 bg-blue-100/70 text-blue-700 rounded-full">{g.trim()}</span>
-                            ))}
-                            {omdbData.imdbRating && omdbData.imdbRating !== 'N/A' && (
-                              <span className="text-[10px] px-1.5 py-0.5 bg-amber-100/80 text-amber-700 rounded-full">⭐ {omdbData.imdbRating}</span>
-                            )}
-                            {omdbData.Runtime && omdbData.Runtime !== 'N/A' && (
-                              <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100/70 text-emerald-700 rounded-full">🕐 {omdbData.Runtime}</span>
-                            )}
-                          </div>
-                          <p className="text-xs text-glass-subtle line-clamp-2">{omdbData.Plot}</p>
-                          <button
-                            type="button"
-                            onClick={() => setMovieForm((prev) => ({
-                              ...prev,
-                              title: omdbData.Title,
-                              title_en: omdbData.Title,
-                              description: omdbData.Plot,
-                              thumbnail_url: omdbData.Poster !== 'N/A' ? omdbData.Poster : prev.thumbnail_url,
-                            }))}
-                            className="text-[11px] font-semibold text-purple-700 hover:text-purple-900 underline underline-offset-2 transition"
-                          >
-                            🔄 Ghi đè tất cả ô với thông tin này
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  )}
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="text-xs font-semibold text-blue-800 mb-1 block">Tiêu đề tiếng Việt *</label>
-                  <input
-                    className="glass-input px-3 py-2.5 rounded-xl w-full text-sm"
-                    placeholder="Tên phìm tiếng Việt"
-                    value={movieForm.title}
-                    onChange={(e) => setMovieForm((p) => ({ ...p, title: e.target.value }))}
-                  />
-                </div>
-
-
-                <div>
-                  <label className="text-xs font-semibold text-blue-800 mb-1 block">Tiêu đề gốc (EN)</label>
-                  <input
-                    className="glass-input px-3 py-2.5 rounded-xl w-full text-sm"
-                    placeholder="Original title"
-                    value={movieForm.title_en}
-                    onChange={(e) => setMovieForm((p) => ({ ...p, title_en: e.target.value }))}
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-blue-800 mb-1 block">Category</label>
-                  <select
-                    className="glass-input px-3 py-2.5 rounded-xl w-full text-sm"
-                    value={movieForm.category_id}
-                    onChange={(e) => setMovieForm((p) => ({ ...p, category_id: e.target.value }))}
-                  >
-                    <option value="">-- Chọn danh mục --</option>
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-blue-800 mb-1 block">Level</label>
-                  <select
-                    className="glass-input px-3 py-2.5 rounded-xl w-full text-sm"
-                    value={movieForm.hsk_level}
-                    onChange={(e) => setMovieForm((p) => ({ ...p, hsk_level: e.target.value }))}
-                  >
-                    {[1,2,3,4,5,6].map((l) => <option key={l} value={l}>Level {l}</option>)}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-blue-800 mb-1 block">Thumbnail URL</label>
-                  <input
-                    className="glass-input px-3 py-2.5 rounded-xl w-full text-sm"
-                    placeholder="https://... (URL ảnh poster)"
-                    value={movieForm.thumbnail_url}
-                    onChange={(e) => setMovieForm((p) => ({ ...p, thumbnail_url: e.target.value }))}
-                  />
-                </div>
-
-                <div className="md:col-span-2">
-                  <label className="text-xs font-semibold text-blue-800 mb-1 block">Mô tả</label>
-                  <textarea
-                    className="glass-input px-3 py-2.5 rounded-xl w-full text-sm"
-                    rows={3}
-                    placeholder="Nội dung tóm tắt phìm..."
-                    value={movieForm.description}
-                    onChange={(e) => setMovieForm((p) => ({ ...p, description: e.target.value }))}
-                  />
-                </div>
-
-                <div className="flex items-center gap-4">
-                  <label className="flex items-center gap-2 cursor-pointer text-sm">
-                    <input type="checkbox" className="w-4 h-4" checked={movieForm.is_published}
-                      onChange={(e) => setMovieForm((p) => ({ ...p, is_published: e.target.checked }))} />
-                    <span>Xuất bản</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer text-sm">
-                    <input type="checkbox" className="w-4 h-4" checked={movieForm.is_free}
-                      onChange={(e) => setMovieForm((p) => ({ ...p, is_free: e.target.checked }))} />
-                    <span>Miễn phí</span>
-                  </label>
-                </div>
-              </div>
-
-              <button
-                id="movie-save-btn"
-                disabled={isMovieProcessing || !movieForm.imdb_url || !movieForm.title}
-                onClick={async () => {
-                  setIsMovieProcessing(true);
-                  setMovieStatus('Đang lưu phìm...');
+            {/* ── IMDB URL + preview ── */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-purple-800 block">Dán link IMDB</label>
+              <input
+                id="movie-imdb-url"
+                className="glass-input px-3 py-3 rounded-xl w-full text-sm font-mono"
+                placeholder="https://www.imdb.com/title/tt12042730/"
+                value={movieForm.imdb_url}
+                onChange={(e) => {
+                  setMovieForm((p) => ({ ...p, imdb_url: e.target.value }));
+                  setMovieStatus('');
                   setSavedMovieId(null);
-                  setSubCandidates([]);
-                  try {
-                    const res = await fetch(`${API_BASE}/movie/process`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                      body: JSON.stringify({
-                        ...movieForm,
-                        category_id: movieForm.category_id ? Number(movieForm.category_id) : null,
-                        hsk_level: Number(movieForm.hsk_level),
-                      }),
-                    });
-                    const data = await res.json();
-                    if (!data.success) throw new Error(data.message);
-                    setSavedMovieId(data.data.id);
-                    setMovieStatus(`✅ Đã lưu phìm ID #${data.data.id} (${data.data.imdb_id}) — bước tiếp theo: tải phụ đề!`);
-                    fetchVideos();
-                  } catch (err) {
-                    setMovieStatus(`❌ Lỗi: ${err.message}`);
-                  } finally {
-                    setIsMovieProcessing(false);
-                  }
                 }}
-                className="px-6 py-3 rounded-xl font-bold disabled:opacity-50 text-white bg-purple-600/90 hover:bg-purple-700 border border-purple-500/50 shadow-[0_0_15px_rgba(147,51,234,0.3)] transition-all text-sm"
-              >
-                {isMovieProcessing ? '⏳ Đang lưu...' : '🎥 Lưu Phìm vào DB'}
-              </button>
+              />
 
-              {movieStatus && (
-                <div className={`p-3 rounded-xl text-sm font-semibold border ${
-                  movieStatus.startsWith('✅') ? 'bg-green-50/40 border-green-300/50 text-green-800'
-                  : movieStatus.startsWith('❌') ? 'bg-red-50/40 border-red-300/50 text-red-800'
-                  : 'bg-white/20 border-white/50 text-blue-900 animate-pulse'
-                }`}>{movieStatus}</div>
-              )}
-            </div>
-
-            {/* Bước 2: Tải phụ đề */}
-            <div className={`space-y-4 pt-5 border-t border-white/20 transition-opacity ${!savedMovieId ? 'opacity-40 pointer-events-none' : ''}`}>
-              <h3 className="text-sm font-bold text-purple-800 flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-purple-600 text-white text-xs flex items-center justify-center font-bold">2</span>
-                Tải Phụ Đề Từ OpenSubtitles
-                {!savedMovieId && <span className="text-xs text-glass-subtle font-normal">(hoàn thành bước 1 trước)</span>}
-              </h3>
-
-              <p className="text-xs text-glass-subtle">
-                Hệ thống sẽ tìm phụ đề tiếng Anh <strong>và tiếng Việt</strong> — chọn bản khớp thời lượng phìm (±15%), gộp vào cùng dòng theo timestamp.
-              </p>
-
-              {/* Preview candidates */}
-              <button
-                disabled={isSearchingSubs || !savedMovieId}
-                onClick={async () => {
-                  setIsSearchingSubs(true);
-                  setSubCandidates([]);
-                  try {
-                    const res = await fetch(`${API_BASE}/movie/search-subtitles?imdb_id=${encodeURIComponent(movieForm.imdb_url)}`, {
-                      headers: getAuthHeaders(),
-                    });
-                    const data = await res.json();
-                    if (!data.success) throw new Error(data.message);
-                    const enList = data.en || [];
-                    const viList = data.vi || [];
-                    setSubCandidates({ en: enList, vi: viList });
-                    // Tự động chọn #1 làm mặc định
-                    setSelectedEnId(enList[0]?.file_id ?? null);
-                    setSelectedViId(viList[0]?.file_id ?? null);
-                  } catch (err) {
-                    setSubImportStatus(`❌ Không tìm được phụ đề: ${err.message}`);
-                  } finally {
-                    setIsSearchingSubs(false);
-                  }
-                }}
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-purple-100/60 text-purple-700 hover:bg-purple-200/60 border border-purple-300/50 transition disabled:opacity-50"
-              >
-                {isSearchingSubs ? '⏳ Đang tìm...' : '🔍 Xem trước danh sách phụ đề'}
-              </button>
-
-              {subCandidates && (subCandidates.en?.length > 0 || subCandidates.vi?.length > 0) && (
-                <div className="rounded-xl border border-purple-200/50 overflow-hidden space-y-0">
-                  {/* EN */}
-                  {subCandidates.en?.length > 0 && (
-                    <>
-                      <div className="px-3 py-2 bg-purple-50/60 text-xs font-semibold text-purple-700 flex items-center gap-2">
-                        <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px] font-bold">EN</span>
-                        {subCandidates.en.length} phụ đề tiếng Anh
-                        {selectedEnId && <span className="ml-auto text-[10px] text-emerald-600 font-semibold">✅ Đã chọn #{subCandidates.en.findIndex(c => c.file_id === selectedEnId) + 1}</span>}
-                      </div>
-                      <div className="max-h-40 overflow-y-auto divide-y divide-white/20">
-                        {subCandidates.en.map((c, i) => (
-                          <div
-                            key={i}
-                            onClick={() => setSelectedEnId(c.file_id)}
-                            className={`px-3 py-2 text-xs flex items-center gap-2 cursor-pointer transition ${
-                              selectedEnId === c.file_id
-                                ? 'bg-blue-100/70 border-l-2 border-blue-500'
-                                : 'hover:bg-blue-50/40'
-                            }`}
-                          >
-                            <span className={`text-xs font-bold w-5 shrink-0 ${selectedEnId === c.file_id ? 'text-blue-600' : 'text-blue-300'}`}>
-                              {selectedEnId === c.file_id ? '✓' : `#${i+1}`}
-                            </span>
-                            <span className="flex-1 truncate text-blue-900 font-medium">{c.release || c.file_name}</span>
-                            <span className="text-glass-subtle shrink-0 text-[10px]">{c.download_count?.toLocaleString()} dl</span>
-                            {c.duration_s && <span className="text-[10px] text-purple-500 shrink-0">{Math.round(c.duration_s/60)}p</span>}
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                  {/* VI */}
-                  {subCandidates.vi?.length > 0 ? (
-                    <>
-                      <div className="px-3 py-2 bg-amber-50/60 text-xs font-semibold text-amber-700 flex items-center gap-2 border-t border-white/20">
-                        <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px] font-bold">VI</span>
-                        {subCandidates.vi.length} phụ đề tiếng Việt
-                        {selectedViId && <span className="ml-auto text-[10px] text-emerald-600 font-semibold">✅ Đã chọn #{subCandidates.vi.findIndex(c => c.file_id === selectedViId) + 1}</span>}
-                      </div>
-                      <div className="max-h-40 overflow-y-auto divide-y divide-white/20">
-                        {subCandidates.vi.map((c, i) => (
-                          <div
-                            key={i}
-                            onClick={() => setSelectedViId(c.file_id)}
-                            className={`px-3 py-2 text-xs flex items-center gap-2 cursor-pointer transition ${
-                              selectedViId === c.file_id
-                                ? 'bg-amber-100/70 border-l-2 border-amber-500'
-                                : 'hover:bg-amber-50/40'
-                            }`}
-                          >
-                            <span className={`text-xs font-bold w-5 shrink-0 ${selectedViId === c.file_id ? 'text-amber-600' : 'text-amber-300'}`}>
-                              {selectedViId === c.file_id ? '✓' : `#${i+1}`}
-                            </span>
-                            <span className="flex-1 truncate text-blue-900 font-medium">{c.release || c.file_name}</span>
-                            <span className="text-glass-subtle shrink-0 text-[10px]">{c.download_count?.toLocaleString()} dl</span>
-                            {c.duration_s && <span className="text-[10px] text-purple-500 shrink-0">{Math.round(c.duration_s/60)}p</span>}
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="px-3 py-2 text-xs text-amber-600 italic border-t border-white/20">
-                      ⚠️ Không tìm thấy phụ đề tiếng Việt — sẽ chỉ lưu EN
-                    </div>
-                  )}
+              {/* OMDb loading */}
+              {omdbLoading && (
+                <div className="flex items-center gap-2 text-xs text-purple-700 animate-pulse">
+                  <span className="material-symbols-outlined text-sm">hourglass_top</span>
+                  Đang tải thông tin từ OMDb...
                 </div>
               )}
 
-              <button
-                id="movie-import-sub-btn"
-                disabled={isSubImporting || !savedMovieId}
-                onClick={async () => {
-                  setIsSubImporting(true);
-                  setSubImportStatus('Đang tải phụ đề từ OpenSubtitles...');
-                  try {
-                    const res = await fetch(`${API_BASE}/movie/subtitles/import`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                      body: JSON.stringify({
-                        video_id: savedMovieId,
-                        imdb_id: movieForm.imdb_url,
-                        en_file_id: selectedEnId || undefined,
-                        vi_file_id: selectedViId || undefined,
-                      }),
-                    });
-                    const data = await res.json();
-                    if (!data.success) throw new Error(data.message);
-                    setSubImportStatus(`✅ Đã lưu ${data.count} dòng phụ đề — “${data.subtitle_name}”`);
-                  } catch (err) {
-                    setSubImportStatus(`❌ Lỗi: ${err.message}`);
-                  } finally {
-                    setIsSubImporting(false);
-                  }
-                }}
-                className="w-full px-6 py-3 rounded-xl font-bold disabled:opacity-50 text-white bg-emerald-600/90 hover:bg-emerald-700 border border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all text-sm"
-              >
-                {isSubImporting ? '⏳ Đang tải phụ đề EN + VI...' : '⬇️ Tải Phụ Đề EN + VI Từ OpenSubtitles'}
-              </button>
-
-              {subImportStatus && (
-                <div className={`p-3 rounded-xl text-sm font-semibold border ${
-                  subImportStatus.startsWith('✅') ? 'bg-green-50/40 border-green-300/50 text-green-800'
-                  : subImportStatus.startsWith('❌') ? 'bg-red-50/40 border-red-300/50 text-red-800'
-                  : 'bg-white/20 border-white/50 text-blue-900 animate-pulse'
-                }`}>{subImportStatus}</div>
-              )}
-
-              {subImportStatus.startsWith('✅') && savedMovieId && (
-                <a
-                  href={`/player/${savedMovieId}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 text-sm font-semibold transition border border-blue-300/30"
-                >
-                  <span className="material-symbols-outlined text-base">open_in_new</span>
-                  Mở Player xem phìm #
-                  {savedMovieId}
-                </a>
+              {/* OMDb preview card */}
+              {omdbData && !omdbLoading && (
+                omdbData.error ? (
+                  <div className="text-xs text-rose-600 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-sm">error</span>
+                    {omdbData.error}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-3 flex gap-3 items-start">
+                    {omdbData.Poster && omdbData.Poster !== 'N/A' && (
+                      <img src={omdbData.Poster} alt="poster" className="w-14 sm:w-16 rounded-lg object-cover shrink-0 shadow" />
+                    )}
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <div className="font-bold text-sm text-blue-900">{omdbData.Title} <span className="font-normal text-glass-subtle text-xs">({omdbData.Year})</span></div>
+                      <div className="flex flex-wrap gap-1">
+                        {omdbData.Genre?.split(',').map((g) => (
+                          <span key={g} className="text-[10px] px-1.5 py-0.5 bg-blue-100/70 text-blue-700 rounded-full">{g.trim()}</span>
+                        ))}
+                        {omdbData.imdbRating && omdbData.imdbRating !== 'N/A' && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-full">⭐ {omdbData.imdbRating}</span>
+                        )}
+                        {omdbData.Runtime && omdbData.Runtime !== 'N/A' && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded-full">🕐 {omdbData.Runtime}</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-glass-subtle line-clamp-2">{omdbData.Plot}</p>
+                      <div className="text-[10px] text-emerald-700 font-semibold">✅ Sẵn sàng thêm phim</div>
+                    </div>
+                  </div>
+                )
               )}
             </div>
+
+            {/* ── Tùy chọn (ẩn gọn) ── */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-blue-800 mb-1 block">Danh mục</label>
+                <select
+                  className="glass-input px-3 py-2 rounded-xl w-full text-sm"
+                  value={movieForm.category_id}
+                  onChange={(e) => setMovieForm((p) => ({ ...p, category_id: e.target.value }))}
+                >
+                  <option value="">-- Tự động --</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-blue-800 mb-1 block">Level</label>
+                <select
+                  className="glass-input px-3 py-2 rounded-xl w-full text-sm"
+                  value={movieForm.hsk_level}
+                  onChange={(e) => setMovieForm((p) => ({ ...p, hsk_level: e.target.value }))}
+                >
+                  {[1,2,3,4,5,6].map((l) => <option key={l} value={l}>Level {l}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* ── ONE-CLICK button ── */}
+            <button
+              id="movie-auto-import-btn"
+              disabled={isMovieProcessing || !movieForm.imdb_url.trim() || omdbLoading}
+              onClick={async () => {
+                setIsMovieProcessing(true);
+                setMovieStatus('⏳ Đang xử lý... (có thể mất 1-3 phút để tải phụ đề)');
+                setSavedMovieId(null);
+                try {
+                  const res = await fetch(`${API_BASE}/movie/auto-import`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                    body: JSON.stringify({
+                      imdb_url: movieForm.imdb_url,
+                      category_id: movieForm.category_id ? Number(movieForm.category_id) : null,
+                      hsk_level: Number(movieForm.hsk_level),
+                      is_published: true,
+                      is_free: true,
+                    }),
+                  });
+                  const data = await res.json();
+                  if (!data.success) throw new Error(data.message);
+                  setSavedMovieId(data.data.id);
+                  setMovieStatus(`✅ ${data.message}`);
+                  setMovieForm({ imdb_url: '', title: '', title_en: '', description: '', category_id: '', hsk_level: '3', thumbnail_url: '', is_published: true, is_free: true });
+                  setOmdbData(null);
+                  fetchVideos();
+                } catch (err) {
+                  setMovieStatus(`❌ ${err.message}`);
+                } finally {
+                  setIsMovieProcessing(false);
+                }
+              }}
+              className="w-full px-6 py-3.5 rounded-2xl font-bold text-white text-sm bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 shadow-[0_0_20px_rgba(147,51,234,0.35)] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              {isMovieProcessing
+                ? '⏳ Đang thêm phim + tải phụ đề...'
+                : omdbData && !omdbData.error
+                  ? `🚀 Thêm "${omdbData.Title}"`
+                  : '🚀 Tự động thêm phim'}
+            </button>
+
+            {/* Status */}
+            {movieStatus && (
+              <div className={`p-3 rounded-xl text-sm font-semibold border ${
+                movieStatus.startsWith('✅') ? 'bg-green-50/40 border-green-300/50 text-green-800'
+                : movieStatus.startsWith('❌') ? 'bg-red-50/40 border-red-300/50 text-red-800'
+                : 'bg-white/20 border-white/50 text-blue-900 animate-pulse'
+              }`}>{movieStatus}</div>
+            )}
+
+            {/* Player link after success */}
+            {savedMovieId && movieStatus.startsWith('✅') && (
+              <a
+                href={`/player/${savedMovieId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 text-sm font-semibold transition border border-blue-300/30"
+              >
+                <span className="material-symbols-outlined text-base">open_in_new</span>
+                Mở Player xem phim #{savedMovieId}
+              </a>
+            )}
+
+            {/* Tùy chỉnh nâng cao: chọn phụ đề thủ công */}
+            {savedMovieId && (
+              <details className="border-t border-white/20 pt-4">
+                <summary className="text-xs font-semibold text-purple-700 cursor-pointer hover:text-purple-900 transition">
+                  ⚙️ Tùy chỉnh nâng cao (chọn phụ đề thủ công)
+                </summary>
+                <div className="mt-3 space-y-3">
+                  <button
+                    disabled={isSearchingSubs}
+                    onClick={async () => {
+                      setIsSearchingSubs(true);
+                      setSubCandidates([]);
+                      try {
+                        const res = await fetch(`${API_BASE}/movie/search-subtitles?imdb_id=${encodeURIComponent(movieForm.imdb_url || '')}`, { headers: getAuthHeaders() });
+                        const data = await res.json();
+                        if (!data.success) throw new Error(data.message);
+                        const en = data.en || [], vi = data.vi || [];
+                        setSubCandidates({ en, vi });
+                        setSelectedEnId(en[0]?.file_id ?? null);
+                        setSelectedViId(vi[0]?.file_id ?? null);
+                      } catch (err) {
+                        setSubImportStatus(`❌ ${err.message}`);
+                      } finally { setIsSearchingSubs(false); }
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-purple-100/60 text-purple-700 hover:bg-purple-200/60 border border-purple-300/50 disabled:opacity-50 transition"
+                  >
+                    {isSearchingSubs ? '⏳ Đang tìm...' : '🔍 Xem danh sách phụ đề'}
+                  </button>
+
+                  {subCandidates && (subCandidates.en?.length > 0 || subCandidates.vi?.length > 0) && (
+                    <div className="rounded-xl border border-purple-200/50 overflow-hidden text-xs">
+                      {subCandidates.en?.length > 0 && (
+                        <>
+                          <div className="px-3 py-2 bg-purple-50/60 font-semibold text-purple-700 flex items-center gap-2">
+                            <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px] font-bold">EN</span>
+                            {subCandidates.en.length} phụ đề
+                            {selectedEnId && <span className="ml-auto text-emerald-600">✅ #{subCandidates.en.findIndex(c => c.file_id === selectedEnId)+1}</span>}
+                          </div>
+                          <div className="max-h-36 overflow-y-auto divide-y divide-white/20">
+                            {subCandidates.en.map((c, i) => (
+                              <div key={i} onClick={() => setSelectedEnId(c.file_id)}
+                                className={`px-3 py-1.5 flex items-center gap-2 cursor-pointer transition ${selectedEnId === c.file_id ? 'bg-blue-100/70 border-l-2 border-blue-500' : 'hover:bg-blue-50/40'}`}>
+                                <span className={`font-bold w-5 ${selectedEnId === c.file_id ? 'text-blue-600' : 'text-blue-300'}`}>{selectedEnId === c.file_id ? '✓' : `#${i+1}`}</span>
+                                <span className="flex-1 truncate">{c.release || c.file_name}</span>
+                                <span className="text-glass-subtle shrink-0">{c.download_count?.toLocaleString()} dl</span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                      {subCandidates.vi?.length > 0 && (
+                        <>
+                          <div className="px-3 py-2 bg-amber-50/60 font-semibold text-amber-700 flex items-center gap-2 border-t border-white/20">
+                            <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px] font-bold">VI</span>
+                            {subCandidates.vi.length} phụ đề
+                            {selectedViId && <span className="ml-auto text-emerald-600">✅ #{subCandidates.vi.findIndex(c => c.file_id === selectedViId)+1}</span>}
+                          </div>
+                          <div className="max-h-36 overflow-y-auto divide-y divide-white/20">
+                            {subCandidates.vi.map((c, i) => (
+                              <div key={i} onClick={() => setSelectedViId(c.file_id)}
+                                className={`px-3 py-1.5 flex items-center gap-2 cursor-pointer transition ${selectedViId === c.file_id ? 'bg-amber-100/70 border-l-2 border-amber-500' : 'hover:bg-amber-50/40'}`}>
+                                <span className={`font-bold w-5 ${selectedViId === c.file_id ? 'text-amber-600' : 'text-amber-300'}`}>{selectedViId === c.file_id ? '✓' : `#${i+1}`}</span>
+                                <span className="flex-1 truncate">{c.release || c.file_name}</span>
+                                <span className="text-glass-subtle shrink-0">{c.download_count?.toLocaleString()} dl</span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {subCandidates && (subCandidates.en?.length > 0 || subCandidates.vi?.length > 0) && (
+                    <button
+                      disabled={isSubImporting || !selectedEnId}
+                      onClick={async () => {
+                        setIsSubImporting(true);
+                        setSubImportStatus('Đang tải...');
+                        try {
+                          const res = await fetch(`${API_BASE}/movie/subtitles/import`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                            body: JSON.stringify({ video_id: savedMovieId, imdb_id: movieForm.imdb_url, en_file_id: selectedEnId, vi_file_id: selectedViId }),
+                          });
+                          const data = await res.json();
+                          if (!data.success) throw new Error(data.message);
+                          setSubImportStatus(`✅ ${data.message}`);
+                        } catch (err) {
+                          setSubImportStatus(`❌ ${err.message}`);
+                        } finally { setIsSubImporting(false); }
+                      }}
+                      className="w-full px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-emerald-600/90 hover:bg-emerald-700 disabled:opacity-50 transition"
+                    >
+                      {isSubImporting ? '⏳ Đang tải...' : '⬇️ Áp dụng phụ đề đã chọn'}
+                    </button>
+                  )}
+
+                  {subImportStatus && (
+                    <p className={`text-xs font-semibold ${subImportStatus.startsWith('✅') ? 'text-emerald-700' : 'text-rose-600'}`}>{subImportStatus}</p>
+                  )}
+                </div>
+              </details>
+            )}
           </section>
         )}
       </main>
