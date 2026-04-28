@@ -323,7 +323,7 @@ exports.processImdbMovie = async (req, res) => {
  */
 exports.fetchAndImportSubtitles = async (req, res) => {
   try {
-    const { video_id, imdb_id: rawImdbId } = req.body;
+    const { video_id, imdb_id: rawImdbId, en_file_id, vi_file_id } = req.body;
 
     if (!video_id) {
       return res.status(400).json({ success: false, message: 'Thiếu video_id' });
@@ -347,44 +347,56 @@ exports.fetchAndImportSubtitles = async (req, res) => {
 
     const numericId = imdbId.replace('tt', '');
 
-    // ── 1. Search + Download EN ──────────────────────────────────────────────
-    console.log(`[movie] Searching EN subtitles for ${imdbId}...`);
-    const enCandidates = await searchCandidates(numericId, 'en');
-    if (!enCandidates.length) {
-      return res.status(404).json({
-        success: false,
-        message: `Không tìm thấy phụ đề tiếng Anh cho ${imdbId}`,
-      });
-    }
-
-    const enResult = await pickBestByDuration(enCandidates, 0); // No target yet
-    if (!enResult) {
-      return res.status(502).json({ success: false, message: 'Không tải được phụ đề EN' });
+    // ── 1. Download EN (dùng file_id đã chọn hoặc auto-pick) ────────────────
+    let enResult;
+    if (en_file_id) {
+      console.log(`[movie] Using manually selected EN file_id=${en_file_id}`);
+      const parsed = await downloadAndParse(en_file_id);
+      if (!parsed) return res.status(502).json({ success: false, message: 'Không tải được phụ đề EN đã chọn' });
+      enResult = { parsed, candidate: { file_id: en_file_id, release: 'manual' }, duration: getSubDuration(parsed) };
+    } else {
+      console.log(`[movie] Searching EN subtitles for ${imdbId}...`);
+      const enCandidates = await searchCandidates(numericId, 'en');
+      if (!enCandidates.length) {
+        return res.status(404).json({ success: false, message: `Không tìm thấy phụ đề tiếng Anh cho ${imdbId}` });
+      }
+      enResult = await pickBestByDuration(enCandidates, 0);
+      if (!enResult) return res.status(502).json({ success: false, message: 'Không tải được phụ đề EN' });
     }
 
     const enSubs = enResult.parsed;
     const movieDuration = enResult.duration;
     console.log(`[movie] EN: ${enSubs.length} lines, duration ~${Math.round(movieDuration)}s`);
 
-    // ── 2. Search + Download VI (match duration) ─────────────────────────────
+    // ── 2. Download VI (dùng file_id đã chọn hoặc auto-pick) ────────────────
     let viSubs = [];
     let viName = null;
 
-    console.log(`[movie] Searching VI subtitles for ${imdbId}...`);
-    const viCandidates = await searchCandidates(numericId, 'vi');
-
-    if (viCandidates.length) {
-      const viResult = await pickBestByDuration(viCandidates, movieDuration, 0.15, 4);
-      if (viResult) {
-        viSubs = viResult.parsed;
-        viName = viResult.candidate.release || viResult.candidate.file_name;
-        console.log(`[movie] VI: ${viSubs.length} lines, duration ~${Math.round(viResult.duration)}s`);
-      } else {
-        console.log('[movie] No matching VI subtitle found');
+    if (vi_file_id) {
+      console.log(`[movie] Using manually selected VI file_id=${vi_file_id}`);
+      const parsed = await downloadAndParse(vi_file_id);
+      if (parsed) {
+        viSubs = parsed;
+        viName = 'manual';
+        console.log(`[movie] VI (manual): ${viSubs.length} lines`);
       }
     } else {
-      console.log('[movie] No VI subtitles found on OpenSubtitles');
+      console.log(`[movie] Searching VI subtitles for ${imdbId}...`);
+      const viCandidates = await searchCandidates(numericId, 'vi');
+      if (viCandidates.length) {
+        const viResult = await pickBestByDuration(viCandidates, movieDuration, 0.15, 4);
+        if (viResult) {
+          viSubs = viResult.parsed;
+          viName = viResult.candidate.release || viResult.candidate.file_name;
+          console.log(`[movie] VI: ${viSubs.length} lines, duration ~${Math.round(viResult.duration)}s`);
+        } else {
+          console.log('[movie] No matching VI subtitle found');
+        }
+      } else {
+        console.log('[movie] No VI subtitles found on OpenSubtitles');
+      }
     }
+
 
     // ── 3. Merge EN + VI by time overlap ────────────────────────────────────
     const merged = mergeByTimeOverlap(enSubs, viSubs);

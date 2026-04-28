@@ -336,6 +336,8 @@ const Admin = () => {
   const [isSubImporting, setIsSubImporting] = useState(false);
   const [subCandidates, setSubCandidates] = useState([]);
   const [isSearchingSubs, setIsSearchingSubs] = useState(false);
+  const [selectedEnId, setSelectedEnId] = useState(null); // file_id EN đã chọn
+  const [selectedViId, setSelectedViId] = useState(null); // file_id VI đã chọn
 
 
   const userCountText = useMemo(() => `${users.length} người dùng`, [users.length]);
@@ -1647,7 +1649,12 @@ const Admin = () => {
                     });
                     const data = await res.json();
                     if (!data.success) throw new Error(data.message);
-                    setSubCandidates({ en: data.en || [], vi: data.vi || [] });
+                    const enList = data.en || [];
+                    const viList = data.vi || [];
+                    setSubCandidates({ en: enList, vi: viList });
+                    // Tự động chọn #1 làm mặc định
+                    setSelectedEnId(enList[0]?.file_id ?? null);
+                    setSelectedViId(viList[0]?.file_id ?? null);
                   } catch (err) {
                     setSubImportStatus(`❌ Không tìm được phụ đề: ${err.message}`);
                   } finally {
@@ -1667,13 +1674,25 @@ const Admin = () => {
                       <div className="px-3 py-2 bg-purple-50/60 text-xs font-semibold text-purple-700 flex items-center gap-2">
                         <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px] font-bold">EN</span>
                         {subCandidates.en.length} phụ đề tiếng Anh
+                        {selectedEnId && <span className="ml-auto text-[10px] text-emerald-600 font-semibold">✅ Đã chọn #{subCandidates.en.findIndex(c => c.file_id === selectedEnId) + 1}</span>}
                       </div>
-                      <div className="max-h-36 overflow-y-auto divide-y divide-white/20">
+                      <div className="max-h-40 overflow-y-auto divide-y divide-white/20">
                         {subCandidates.en.map((c, i) => (
-                          <div key={i} className="px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-blue-50/30">
-                            <span className="text-blue-400 font-mono w-5">#{i+1}</span>
-                            <span className="flex-1 truncate text-blue-900">{c.release || c.file_name}</span>
-                            <span className="text-glass-subtle shrink-0">{c.download_count?.toLocaleString()} dl</span>
+                          <div
+                            key={i}
+                            onClick={() => setSelectedEnId(c.file_id)}
+                            className={`px-3 py-2 text-xs flex items-center gap-2 cursor-pointer transition ${
+                              selectedEnId === c.file_id
+                                ? 'bg-blue-100/70 border-l-2 border-blue-500'
+                                : 'hover:bg-blue-50/40'
+                            }`}
+                          >
+                            <span className={`text-xs font-bold w-5 shrink-0 ${selectedEnId === c.file_id ? 'text-blue-600' : 'text-blue-300'}`}>
+                              {selectedEnId === c.file_id ? '✓' : `#${i+1}`}
+                            </span>
+                            <span className="flex-1 truncate text-blue-900 font-medium">{c.release || c.file_name}</span>
+                            <span className="text-glass-subtle shrink-0 text-[10px]">{c.download_count?.toLocaleString()} dl</span>
+                            {c.duration_s && <span className="text-[10px] text-purple-500 shrink-0">{Math.round(c.duration_s/60)}p</span>}
                           </div>
                         ))}
                       </div>
@@ -1685,13 +1704,25 @@ const Admin = () => {
                       <div className="px-3 py-2 bg-amber-50/60 text-xs font-semibold text-amber-700 flex items-center gap-2 border-t border-white/20">
                         <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px] font-bold">VI</span>
                         {subCandidates.vi.length} phụ đề tiếng Việt
+                        {selectedViId && <span className="ml-auto text-[10px] text-emerald-600 font-semibold">✅ Đã chọn #{subCandidates.vi.findIndex(c => c.file_id === selectedViId) + 1}</span>}
                       </div>
-                      <div className="max-h-36 overflow-y-auto divide-y divide-white/20">
+                      <div className="max-h-40 overflow-y-auto divide-y divide-white/20">
                         {subCandidates.vi.map((c, i) => (
-                          <div key={i} className="px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-amber-50/30">
-                            <span className="text-amber-400 font-mono w-5">#{i+1}</span>
-                            <span className="flex-1 truncate text-blue-900">{c.release || c.file_name}</span>
-                            <span className="text-glass-subtle shrink-0">{c.download_count?.toLocaleString()} dl</span>
+                          <div
+                            key={i}
+                            onClick={() => setSelectedViId(c.file_id)}
+                            className={`px-3 py-2 text-xs flex items-center gap-2 cursor-pointer transition ${
+                              selectedViId === c.file_id
+                                ? 'bg-amber-100/70 border-l-2 border-amber-500'
+                                : 'hover:bg-amber-50/40'
+                            }`}
+                          >
+                            <span className={`text-xs font-bold w-5 shrink-0 ${selectedViId === c.file_id ? 'text-amber-600' : 'text-amber-300'}`}>
+                              {selectedViId === c.file_id ? '✓' : `#${i+1}`}
+                            </span>
+                            <span className="flex-1 truncate text-blue-900 font-medium">{c.release || c.file_name}</span>
+                            <span className="text-glass-subtle shrink-0 text-[10px]">{c.download_count?.toLocaleString()} dl</span>
+                            {c.duration_s && <span className="text-[10px] text-purple-500 shrink-0">{Math.round(c.duration_s/60)}p</span>}
                           </div>
                         ))}
                       </div>
@@ -1714,7 +1745,12 @@ const Admin = () => {
                     const res = await fetch(`${API_BASE}/movie/subtitles/import`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                      body: JSON.stringify({ video_id: savedMovieId, imdb_id: movieForm.imdb_url }),
+                      body: JSON.stringify({
+                        video_id: savedMovieId,
+                        imdb_id: movieForm.imdb_url,
+                        en_file_id: selectedEnId || undefined,
+                        vi_file_id: selectedViId || undefined,
+                      }),
                     });
                     const data = await res.json();
                     if (!data.success) throw new Error(data.message);
