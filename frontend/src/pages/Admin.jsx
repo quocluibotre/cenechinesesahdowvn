@@ -343,10 +343,48 @@ const Admin = () => {
   const [subImportStatus, setSubImportStatus] = useState('');
   const [isSubImporting, setIsSubImporting] = useState(false);
   const [subCandidates, setSubCandidates] = useState([]);
+  const [omdbLoading, setOmdbLoading] = useState(false); // trang thai fetch omdb
+  const [omdbData, setOmdbData] = useState(null);       // ket qua omdb
   const [isSearchingSubs, setIsSearchingSubs] = useState(false);
   const [selectedEnId, setSelectedEnId] = useState(null); // file_id EN đã chọn
   const [selectedViId, setSelectedViId] = useState(null); // file_id VI đã chọn
 
+
+  // --- Auto-fetch OMDb khi imdb_url thay đổi ---
+  useEffect(() => {
+    const raw = movieForm.imdb_url.trim();
+    // Extract tt-id
+    const match = raw.match(/tt(\d+)/) || (raw.match(/^\d{5,}$/) ? [null, raw] : null);
+    if (!match) { setOmdbData(null); return; }
+    const imdbId = `tt${match[1]}`;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setOmdbLoading(true);
+      try {
+        const res = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=8b7f7ee1&plot=full`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.Response === 'True') {
+          setOmdbData(data);
+          // Auto-fill các ô trống
+          setMovieForm((prev) => ({
+            ...prev,
+            title: prev.title || data.Title,
+            title_en: prev.title_en || data.Title,
+            description: prev.description || data.Plot,
+            thumbnail_url: prev.thumbnail_url || (data.Poster !== 'N/A' ? data.Poster : ''),
+          }));
+        } else {
+          setOmdbData({ error: data.Error || 'Không tìm thấy phìm' });
+        }
+      } catch {
+        if (!cancelled) setOmdbData({ error: 'Lỗi kết nối OMDb' });
+      } finally {
+        if (!cancelled) setOmdbLoading(false);
+      }
+    }, 700);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [movieForm.imdb_url]);
 
   const userCountText = useMemo(() => `${users.length} người dùng`, [users.length]);
   const adminTabs = [
@@ -1644,7 +1682,57 @@ const Admin = () => {
                     value={movieForm.imdb_url}
                     onChange={(e) => setMovieForm((p) => ({ ...p, imdb_url: e.target.value }))}
                   />
-                  <p className="text-xs text-glass-subtle mt-1">Dán link IMDB — hệ thống sẽ tự lấy ID (tt12042730)</p>
+                  <p className="text-xs text-glass-subtle mt-1">Dán link IMDB — tự động tải thông tin phim từ OMDb</p>
+
+                  {/* OMDb preview */}
+                  {omdbLoading && (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-purple-700 animate-pulse">
+                      <span className="material-symbols-outlined text-sm">hourglass_top</span>
+                      Đang tải thông tin phim từ OMDb...
+                    </div>
+                  )}
+                  {omdbData && !omdbLoading && (
+                    omdbData.error ? (
+                      <div className="mt-2 text-xs text-rose-600 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-sm">error</span>
+                        {omdbData.error}
+                      </div>
+                    ) : (
+                      <div className="mt-3 rounded-xl border border-purple-200/60 bg-purple-50/40 p-3 flex gap-3">
+                        {omdbData.Poster && omdbData.Poster !== 'N/A' && (
+                          <img src={omdbData.Poster} alt="poster" className="w-16 rounded-lg object-cover shrink-0 shadow" />
+                        )}
+                        <div className="flex-1 min-w-0 space-y-1">
+                          <div className="font-bold text-sm text-blue-900 truncate">{omdbData.Title} <span className="font-normal text-glass-subtle">({omdbData.Year})</span></div>
+                          <div className="flex flex-wrap gap-1">
+                            {omdbData.Genre?.split(',').map((g) => (
+                              <span key={g} className="text-[10px] px-1.5 py-0.5 bg-blue-100/70 text-blue-700 rounded-full">{g.trim()}</span>
+                            ))}
+                            {omdbData.imdbRating && omdbData.imdbRating !== 'N/A' && (
+                              <span className="text-[10px] px-1.5 py-0.5 bg-amber-100/80 text-amber-700 rounded-full">⭐ {omdbData.imdbRating}</span>
+                            )}
+                            {omdbData.Runtime && omdbData.Runtime !== 'N/A' && (
+                              <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100/70 text-emerald-700 rounded-full">🕐 {omdbData.Runtime}</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-glass-subtle line-clamp-2">{omdbData.Plot}</p>
+                          <button
+                            type="button"
+                            onClick={() => setMovieForm((prev) => ({
+                              ...prev,
+                              title: omdbData.Title,
+                              title_en: omdbData.Title,
+                              description: omdbData.Plot,
+                              thumbnail_url: omdbData.Poster !== 'N/A' ? omdbData.Poster : prev.thumbnail_url,
+                            }))}
+                            className="text-[11px] font-semibold text-purple-700 hover:text-purple-900 underline underline-offset-2 transition"
+                          >
+                            🔄 Ghi đè tất cả ô với thông tin này
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  )}
                 </div>
 
                 <div className="md:col-span-2">
@@ -1656,6 +1744,7 @@ const Admin = () => {
                     onChange={(e) => setMovieForm((p) => ({ ...p, title: e.target.value }))}
                   />
                 </div>
+
 
                 <div>
                   <label className="text-xs font-semibold text-blue-800 mb-1 block">Tiêu đề gốc (EN)</label>
