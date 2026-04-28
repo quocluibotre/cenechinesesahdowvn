@@ -1749,7 +1749,7 @@ const Player = () => {
   const currentTrack = normalizeTrackValue(videoData.language_track, 'chinese');
 
   return (
-    <div className="min-h-screen pb-8 sm:pb-10 text-glass-main relative">
+    <div className="min-h-screen pb-8 sm:pb-10 text-glass-main relative overflow-x-hidden">
       <div className="absolute top-24 left-[-4rem] w-44 h-44 bg-blue-300/35 blur-3xl rounded-full pointer-events-none" />
       <div className="absolute bottom-8 right-[-4rem] w-52 h-52 bg-cyan-300/35 blur-3xl rounded-full pointer-events-none" />
 
@@ -1984,7 +1984,7 @@ const Player = () => {
                 <button
                   key={tab.key}
                   onClick={() => setActiveTab(tab.key)}
-                  className={`shrink-0 min-w-[116px] sm:min-w-0 sm:flex-1 px-3 py-2.5 rounded-xl transition ${activeTab === tab.key ? 'glass-chip-active' : 'glass-chip'}`}
+                  className={`shrink-0 flex-1 min-w-0 px-2 sm:px-3 py-2.5 rounded-xl transition text-xs sm:text-sm ${activeTab === tab.key ? 'glass-chip-active' : 'glass-chip'}`}
                 >
                   {tab.label}
                 </button>
