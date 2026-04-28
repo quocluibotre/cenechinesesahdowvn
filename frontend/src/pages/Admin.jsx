@@ -305,6 +305,14 @@ const Admin = () => {
   const [editFiles, setEditFiles] = useState({ ...EMPTY_ASSET_FILES });
   const [editSlangEntries, setEditSlangEntries] = useState([createEmptySlangEntry()]);
   const [savingEdit, setSavingEdit] = useState(false);
+  // Subtitle replacement trong edit
+  const [editSubOpen, setEditSubOpen] = useState(false);
+  const [editSubCandidates, setEditSubCandidates] = useState(null);
+  const [editSubSearching, setEditSubSearching] = useState(false);
+  const [editSubEnId, setEditSubEnId] = useState(null);
+  const [editSubViId, setEditSubViId] = useState(null);
+  const [editSubImporting, setEditSubImporting] = useState(false);
+  const [editSubStatus, setEditSubStatus] = useState('');
 
   // States cho tính năng tải Youtube
   const [ytUrl, setYtUrl] = useState('');
@@ -796,6 +804,11 @@ const Admin = () => {
     setEditForm(null);
     setEditFiles({ ...EMPTY_ASSET_FILES });
     setEditSlangEntries([createEmptySlangEntry()]);
+    setEditSubOpen(false);
+    setEditSubCandidates(null);
+    setEditSubEnId(null);
+    setEditSubViId(null);
+    setEditSubStatus('');
   };
 
   const saveEditVideo = async () => {
@@ -1286,6 +1299,138 @@ const Admin = () => {
                   </button>
                   <button onClick={cancelEditVideo} disabled={savingEdit} className="px-4 py-2 rounded-lg glass-btn text-glass-subtle">Hủy</button>
                 </div>
+
+                {/* ── Thay phụ đề (chỉ với IMDB) ──────────────────────── */}
+                {editForm?.video_url?.startsWith('imdb:') && (
+                  <div className="border-t border-white/20 pt-4 space-y-3">
+                    <button
+                      onClick={() => setEditSubOpen((v) => !v)}
+                      className="flex items-center gap-2 text-sm font-semibold text-purple-700 hover:text-purple-900 transition"
+                    >
+                      <span className="material-symbols-outlined text-base">{editSubOpen ? 'expand_less' : 'expand_more'}</span>
+                      🎬 Thay phụ đề (IMDB)
+                      {editSubStatus.startsWith('✅') && <span className="text-[11px] text-emerald-600 font-normal ml-1">{editSubStatus}</span>}
+                    </button>
+
+                    {editSubOpen && (
+                      <div className="space-y-3 pl-2">
+                        <p className="text-xs text-glass-subtle">Tìm và chọn phụ đề EN + VI từ OpenSubtitles để thay thế phụ đề hiện tại.</p>
+
+                        {/* Search button */}
+                        <button
+                          disabled={editSubSearching}
+                          onClick={async () => {
+                            setEditSubSearching(true);
+                            setEditSubCandidates(null);
+                            setEditSubStatus('');
+                            const imdbId = editForm.video_url.replace('imdb:', '');
+                            try {
+                              const res = await fetch(`${API_BASE}/movie/search-subtitles?imdb_id=${imdbId}`, { headers: getAuthHeaders() });
+                              const data = await res.json();
+                              if (!data.success) throw new Error(data.message);
+                              const en = data.en || [], vi = data.vi || [];
+                              setEditSubCandidates({ en, vi });
+                              setEditSubEnId(en[0]?.file_id ?? null);
+                              setEditSubViId(vi[0]?.file_id ?? null);
+                            } catch (err) {
+                              setEditSubStatus(`❌ ${err.message}`);
+                            } finally {
+                              setEditSubSearching(false);
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-purple-100/60 text-purple-700 hover:bg-purple-200/60 border border-purple-300/50 transition disabled:opacity-50"
+                        >
+                          {editSubSearching ? '⏳ Đang tìm...' : '🔍 Tìm phụ đề'}
+                        </button>
+
+                        {/* Candidates list */}
+                        {editSubCandidates && (
+                          <div className="rounded-xl border border-purple-200/50 overflow-hidden">
+                            {/* EN */}
+                            {editSubCandidates.en.length > 0 && (
+                              <>
+                                <div className="px-3 py-2 bg-purple-50/60 text-xs font-semibold text-purple-700 flex items-center gap-2">
+                                  <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px] font-bold">EN</span>
+                                  {editSubCandidates.en.length} phụ đề tiếng Anh
+                                  {editSubEnId && <span className="ml-auto text-[10px] text-emerald-600">✅ #{editSubCandidates.en.findIndex(c => c.file_id === editSubEnId) + 1}</span>}
+                                </div>
+                                <div className="max-h-36 overflow-y-auto divide-y divide-white/20">
+                                  {editSubCandidates.en.map((c, i) => (
+                                    <div key={i} onClick={() => setEditSubEnId(c.file_id)}
+                                      className={`px-3 py-1.5 text-xs flex items-center gap-2 cursor-pointer transition ${editSubEnId === c.file_id ? 'bg-blue-100/70 border-l-2 border-blue-500' : 'hover:bg-blue-50/40'}`}>
+                                      <span className={`font-bold w-5 shrink-0 ${editSubEnId === c.file_id ? 'text-blue-600' : 'text-blue-300'}`}>{editSubEnId === c.file_id ? '✓' : `#${i+1}`}</span>
+                                      <span className="flex-1 truncate text-blue-900">{c.release || c.file_name}</span>
+                                      <span className="text-glass-subtle shrink-0">{c.download_count?.toLocaleString()} dl</span>
+                                      {c.duration_s && <span className="text-[10px] text-purple-500">{Math.round(c.duration_s/60)}p</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                            {/* VI */}
+                            <div className="px-3 py-2 bg-amber-50/60 text-xs font-semibold text-amber-700 flex items-center gap-2 border-t border-white/20">
+                              <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px] font-bold">VI</span>
+                              {editSubCandidates.vi.length > 0 ? `${editSubCandidates.vi.length} phụ đề tiếng Việt` : 'Không có phụ đề VI'}
+                              {editSubViId && <span className="ml-auto text-[10px] text-emerald-600">✅ #{editSubCandidates.vi.findIndex(c => c.file_id === editSubViId) + 1}</span>}
+                            </div>
+                            {editSubCandidates.vi.length > 0 && (
+                              <div className="max-h-36 overflow-y-auto divide-y divide-white/20">
+                                {editSubCandidates.vi.map((c, i) => (
+                                  <div key={i} onClick={() => setEditSubViId(c.file_id)}
+                                    className={`px-3 py-1.5 text-xs flex items-center gap-2 cursor-pointer transition ${editSubViId === c.file_id ? 'bg-amber-100/70 border-l-2 border-amber-500' : 'hover:bg-amber-50/40'}`}>
+                                    <span className={`font-bold w-5 shrink-0 ${editSubViId === c.file_id ? 'text-amber-600' : 'text-amber-300'}`}>{editSubViId === c.file_id ? '✓' : `#${i+1}`}</span>
+                                    <span className="flex-1 truncate text-blue-900">{c.release || c.file_name}</span>
+                                    <span className="text-glass-subtle shrink-0">{c.download_count?.toLocaleString()} dl</span>
+                                    {c.duration_s && <span className="text-[10px] text-purple-500">{Math.round(c.duration_s/60)}p</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Import button */}
+                        {editSubCandidates && (
+                          <button
+                            disabled={editSubImporting || !editSubEnId}
+                            onClick={async () => {
+                              setEditSubImporting(true);
+                              setEditSubStatus('Đang tải phụ đề...');
+                              try {
+                                const res = await fetch(`${API_BASE}/movie/subtitles/import`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                                  body: JSON.stringify({
+                                    video_id: editVideoId,
+                                    imdb_id: editForm.video_url.replace('imdb:', ''),
+                                    en_file_id: editSubEnId || undefined,
+                                    vi_file_id: editSubViId || undefined,
+                                  }),
+                                });
+                                const data = await res.json();
+                                if (!data.success) throw new Error(data.message);
+                                setEditSubStatus(`✅ ${data.message}`);
+                                setEditSubCandidates(null);
+                                setEditSubOpen(false);
+                              } catch (err) {
+                                setEditSubStatus(`❌ ${err.message}`);
+                              } finally {
+                                setEditSubImporting(false);
+                              }
+                            }}
+                            className="w-full px-4 py-2 rounded-xl text-sm font-bold text-white bg-emerald-600/90 hover:bg-emerald-700 border border-emerald-500/50 transition disabled:opacity-50"
+                          >
+                            {editSubImporting ? '⏳ Đang tải...' : '⬇️ Áp dụng phụ đề đã chọn'}
+                          </button>
+                        )}
+
+                        {editSubStatus && !editSubStatus.startsWith('✅') && (
+                          <p className={`text-xs ${editSubStatus.startsWith('❌') ? 'text-rose-600' : 'text-glass-subtle'}`}>{editSubStatus}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </section>
