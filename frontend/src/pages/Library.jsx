@@ -20,6 +20,7 @@ const normalizeTrackValue = (value, fallback = 'all') => {
   if (['all'].includes(normalized)) return 'all';
   if (['english', 'en', 'eng'].includes(normalized)) return 'english';
   if (['chinese', 'cn', 'zh', 'mandarin'].includes(normalized)) return 'chinese';
+  if (['imdb'].includes(normalized)) return 'imdb';
   return fallback;
 };
 
@@ -92,12 +93,18 @@ const Library = () => {
     if (trackFilter === 'all') {
       return videos;
     }
+    if (trackFilter === 'imdb') {
+      return videos.filter((video) => video.video_url?.startsWith('imdb:'));
+    }
     return videos.filter((video) => normalizeTrackValue(video.language_track, 'chinese') === trackFilter);
   }, [videos, trackFilter]);
 
   const trackCounts = useMemo(() => {
-    const counts = { chinese: 0, english: 0 };
+    const counts = { chinese: 0, english: 0, imdb: 0 };
     videos.forEach((video) => {
+      if (video.video_url?.startsWith('imdb:')) {
+        counts.imdb += 1;
+      }
       const normalized = normalizeTrackValue(video.language_track, 'chinese');
       if (normalized === 'english') {
         counts.english += 1;
@@ -108,17 +115,36 @@ const Library = () => {
     return counts;
   }, [videos]);
 
+  const imdbGenresList = useMemo(() => {
+    const genreSet = new Set();
+    videos.forEach((v) => {
+      if (v.video_url?.startsWith('imdb:') && v.imdb_genres) {
+        v.imdb_genres.split(',').forEach((g) => genreSet.add(g.trim()));
+      }
+    });
+    return Array.from(genreSet).sort();
+  }, [videos]);
+
   const categoryVideoCountMap = useMemo(() => {
     const map = {};
-    trackScopedVideos.forEach((video) => {
-      const slug = getCategorySlug(video.category_id);
-      if (!slug) {
-        return;
-      }
-      map[slug] = (map[slug] || 0) + 1;
-    });
+    if (trackFilter === 'imdb') {
+      trackScopedVideos.forEach((video) => {
+        if (video.imdb_genres) {
+          video.imdb_genres.split(',').forEach((g) => {
+            const genre = g.trim();
+            map[genre] = (map[genre] || 0) + 1;
+          });
+        }
+      });
+    } else {
+      trackScopedVideos.forEach((video) => {
+        const slug = getCategorySlug(video.category_id);
+        if (!slug) return;
+        map[slug] = (map[slug] || 0) + 1;
+      });
+    }
     return map;
-  }, [trackScopedVideos, categories]);
+  }, [trackScopedVideos, categories, trackFilter]);
 
   const changeTrackFilter = (nextTrack) => {
     const safeTrack = normalizeTrackValue(nextTrack, 'all');
@@ -142,7 +168,11 @@ const Library = () => {
     }
 
     if (categoryFilter !== 'all') {
-      data = data.filter((v) => getCategorySlug(v.category_id) === categoryFilter);
+      if (trackFilter === 'imdb') {
+        data = data.filter((v) => v.imdb_genres && v.imdb_genres.includes(categoryFilter));
+      } else {
+        data = data.filter((v) => getCategorySlug(v.category_id) === categoryFilter);
+      }
     }
 
     if (searchQuery.trim()) {
@@ -356,9 +386,11 @@ const Library = () => {
     ? 'Tiếp tục hành trình học tiếng Anh của bạn'
     : trackFilter === 'chinese'
       ? 'Tiếp tục hành trình học tiếng Trung của bạn'
-      : 'Tiếp tục hành trình học ngoại ngữ của bạn';
+      : trackFilter === 'imdb'
+        ? 'Kho phim điện ảnh IMDB'
+        : 'Tiếp tục hành trình học ngoại ngữ của bạn';
 
-  const levelFilterLabel = trackFilter === 'english' ? 'Tất cả level' : 'Tất cả cấp độ';
+  const levelFilterLabel = trackFilter === 'english' ? 'Tất cả level' : trackFilter === 'imdb' ? 'Tất cả HSK' : 'Tất cả cấp độ';
 
   return (
     <div className="min-h-screen pb-8 sm:pb-10 text-glass-main relative overflow-x-hidden">
@@ -423,7 +455,7 @@ const Library = () => {
         <section className="glass-surface-strong rounded-2xl sm:rounded-3xl p-4 sm:p-6 border border-white/75">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
-              <h1 className="text-xl sm:text-3xl font-bold mb-0.5 text-blue-950">Chào mừng trở lại!</h1>
+              <h1 className="text-xl sm:text-3xl font-bold mb-0.5 text-blue-950">Chào mừng bạn đến với CineShadow</h1>
               <p className="text-sm text-glass-subtle">{activeTrackHeading}</p>
             </div>
 
@@ -450,164 +482,98 @@ const Library = () => {
             <span className="material-symbols-outlined text-blue-600">translate</span>
             Hướng học
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 stagger-sequence">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 stagger-sequence">
             <button
               onClick={() => changeTrackFilter('all')}
-              className={`stagger-item category-card rounded-2xl p-4 text-left border transition glass-hover-lift ${trackFilter === 'all' ? 'glass-surface-strong border-blue-500/40' : 'glass-surface border-white/70 hover:border-blue-300/50'}`}
+              className={`stagger-item category-card rounded-xl p-3 text-left border transition glass-hover-lift ${trackFilter === 'all' ? 'glass-surface-strong border-blue-500/40' : 'glass-surface border-white/70 hover:border-blue-300/50'}`}
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-blue-900">Tất cả lộ trình</span>
-                <span className="material-symbols-outlined text-blue-600">public</span>
+              <div className="flex items-center justify-between gap-1.5">
+                <span className="font-semibold text-blue-900 text-sm">Tất cả lộ trình</span>
+                <span className="material-symbols-outlined text-blue-600 text-lg">public</span>
               </div>
-              <p className="text-xs text-glass-subtle mt-1">Học đa ngôn ngữ trên cùng một thư viện</p>
-              <div className="text-sm font-medium text-blue-800 mt-3">{videos.length} video</div>
+              <p className="text-[10px] sm:text-xs text-glass-subtle mt-0.5 line-clamp-1">Học đa ngôn ngữ trên cùng một thư viện</p>
+              <div className="text-xs font-medium text-blue-800 mt-2">{videos.length} video</div>
             </button>
 
             <button
               onClick={() => changeTrackFilter('chinese')}
-              className={`stagger-item category-card rounded-2xl p-4 text-left border transition glass-hover-lift ${trackFilter === 'chinese' ? 'glass-surface-strong border-blue-500/40' : 'glass-surface border-white/70 hover:border-blue-300/50'}`}
+              className={`stagger-item category-card rounded-xl p-3 text-left border transition glass-hover-lift ${trackFilter === 'chinese' ? 'glass-surface-strong border-blue-500/40' : 'glass-surface border-white/70 hover:border-blue-300/50'}`}
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-blue-900">Tiếng Trung</span>
-                <span className="material-symbols-outlined text-blue-600">south_america</span>
+              <div className="flex items-center justify-between gap-1.5">
+                <span className="font-semibold text-blue-900 text-sm">Tiếng Trung</span>
+                <span className="material-symbols-outlined text-blue-600 text-lg">south_america</span>
               </div>
-              <p className="text-xs text-glass-subtle mt-1">Shadowing phim Trung, bám sát ngữ điệu bản xứ</p>
-              <div className="text-sm font-medium text-blue-800 mt-3">{trackCounts.chinese} video</div>
+              <p className="text-[10px] sm:text-xs text-glass-subtle mt-0.5 line-clamp-1">Phim Trung, bám sát ngữ điệu</p>
+              <div className="text-xs font-medium text-blue-800 mt-2">{trackCounts.chinese} video</div>
             </button>
 
             <button
               onClick={() => changeTrackFilter('english')}
-              className={`stagger-item category-card rounded-2xl p-4 text-left border transition glass-hover-lift ${trackFilter === 'english' ? 'glass-surface-strong border-blue-500/40' : 'glass-surface border-white/70 hover:border-blue-300/50'}`}
+              className={`stagger-item category-card rounded-xl p-3 text-left border transition glass-hover-lift ${trackFilter === 'english' ? 'glass-surface-strong border-blue-500/40' : 'glass-surface border-white/70 hover:border-blue-300/50'}`}
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-blue-900">Tiếng Anh</span>
-                <span className="material-symbols-outlined text-blue-600">language</span>
+              <div className="flex items-center justify-between gap-1.5">
+                <span className="font-semibold text-blue-900 text-sm">Tiếng Anh</span>
+                <span className="material-symbols-outlined text-blue-600 text-lg">language</span>
               </div>
-              <p className="text-xs text-glass-subtle mt-1">Luyện phản xạ giao tiếp với video hội thoại thực tế</p>
-              <div className="text-sm font-medium text-blue-800 mt-3">{trackCounts.english} video</div>
+              <p className="text-[10px] sm:text-xs text-glass-subtle mt-0.5 line-clamp-1">Luyện phản xạ giao tiếp</p>
+              <div className="text-xs font-medium text-blue-800 mt-2">{trackCounts.english} video</div>
+            </button>
+
+            <button
+              onClick={() => changeTrackFilter('imdb')}
+              className={`stagger-item category-card rounded-xl p-3 text-left border transition glass-hover-lift ${trackFilter === 'imdb' ? 'glass-surface-strong border-purple-500/40' : 'glass-surface border-white/70 hover:border-purple-300/50'}`}
+            >
+              <div className="flex items-center justify-between gap-1.5">
+                <span className="font-semibold text-purple-900 text-sm">Movie</span>
+                <span className="material-symbols-outlined text-purple-600 text-lg">theaters</span>
+              </div>
+              <p className="text-[10px] sm:text-xs text-glass-subtle mt-0.5 line-clamp-1">Phim điện ảnh song ngữ</p>
+              <div className="text-xs font-medium text-purple-800 mt-2">{trackCounts.imdb} phim</div>
             </button>
           </div>
         </section>
 
-        {continueWatching.length > 0 && (
-          <section>
-            <div className="glass-section-head">
-              <h2 className="glass-section-title text-xl">
-                <span className="material-symbols-outlined text-blue-600">history</span>
-                Tiếp tục xem
-              </h2>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 stagger-sequence">
-              {continueWatching.map((item) => (
-                <Link key={`${item.video_id}-${item.progress_id}`} to={`/player/${item.video_id}`} className="stagger-item glass-surface rounded-2xl p-3.5 sm:p-4 border border-white/70 flex flex-col min-[420px]:flex-row gap-3 sm:gap-4 glass-hover-lift">
-                  <div className="relative w-full min-[420px]:w-32 h-40 min-[420px]:h-20 flex-shrink-0">
-                    <VideoThumbnail
-                      thumbnailUrl={item.thumbnail_url}
-                      videoUrl={item.video_url}
-                      className="w-full h-full object-cover rounded-lg"
-                      alt={item.title}
-                    />
-                    <div className="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1.5 py-0.5 rounded">{formatDuration(item.duration || 0)}</div>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-medium text-blue-950 line-clamp-1">{item.title}</h3>
-                    <p className="text-sm text-glass-subtle line-clamp-1">{item.title_cn || ''}</p>
-                    <div className="mt-2">
-                      <div className="flex items-center justify-between text-xs text-glass-subtle mb-1">
-                        <span>Đã xem {Math.round(Number(item.watch_percentage || 0))}%</span>
-                        <span>{item.remaining_formatted} còn lại</span>
-                      </div>
-                      <div className="h-1.5 bg-white/70 rounded-full">
-                        <div className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full" style={{ width: `${Number(item.watch_percentage || 0)}%` }} />
-                      </div>
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </section>
-        )}
-
-        <section>
-          <div className="glass-section-head mb-4">
-            <h2 className="glass-section-title text-xl">
-              <span className="material-symbols-outlined text-blue-600">auto_awesome</span>
-              Đề xuất cho bạn
-            </h2>
-            <span className="glass-status glass-status-neutral">
-              {trackFilter === 'english' ? 'Theo lộ trình tiếng Anh' : trackFilter === 'chinese' ? 'Theo lộ trình tiếng Trung' : 'Đa lộ trình'}
-            </span>
-          </div>
-
-          {loadingRecommendations ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {[1, 2, 3, 4].map((i) => <div key={i} className="h-52 glass-surface rounded-2xl animate-pulse" />)}
-            </div>
-          ) : recommendedVideos.length ? (
-            <div className="stagger-sequence grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {recommendedVideos.slice(0, 8).map((video) => (
-                <Link
-                  to={`/player/${video.id}`}
-                  key={`recommended-${video.id}`}
-                  className="stagger-item video-card glass-surface rounded-2xl border border-white/70 overflow-hidden glass-hover-lift"
-                >
-                  <div className="relative overflow-hidden">
-                    <VideoThumbnail
-                      thumbnailUrl={video.thumbnail_url}
-                      videoUrl={video.video_url}
-                      alt={video.title}
-                      className="w-full h-full aspect-video object-cover"
-                    />
-                    <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-2 py-1 rounded">{formatDuration(video.duration)}</div>
-                    <div className="absolute top-2 left-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white text-xs font-bold px-2 py-1 rounded">{getLevelLabel(getVideoTrack(video), video.hsk_level)}</div>
-                    <div className="absolute top-2 right-2 bg-white/85 text-blue-900 text-xs font-semibold px-2 py-1 rounded">{getVideoTrack(video) === 'english' ? 'English' : 'Chinese'}</div>
-                  </div>
-
-                  <div className="p-4 min-w-0">
-                    <h3 className="font-medium text-blue-950 line-clamp-2 mb-1">{video.title}</h3>
-                    <p className="text-sm text-glass-subtle line-clamp-1 mb-2">{video.title_cn || ''}</p>
-                    <div className="text-xs text-glass-subtle/80 flex items-center gap-2">
-                      <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">visibility</span>{Number(video.view_count || 0).toLocaleString()}</span>
-                      <span>{video.category_name || '-'}</span>
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <div className="glass-empty py-8">
-              <span className="material-symbols-outlined text-4xl">recommend</span>
-              <p className="mt-2">Chưa có dữ liệu đủ để gợi ý. Hãy xem vài video để nhận đề xuất tốt hơn.</p>
-            </div>
-          )}
-        </section>
 
         <section>
           <h2 className="glass-section-title text-xl mb-4">
             <span className="material-symbols-outlined text-blue-600">category</span>
-            Danh mục theo hướng học
+            Thể Loại
           </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 stagger-sequence">
+          <div className="flex flex-wrap gap-2.5 stagger-sequence">
             <button
               onClick={() => setCategoryFilter('all')}
-              className={`stagger-item category-card rounded-2xl p-4 text-center border transition glass-hover-lift ${categoryFilter === 'all' ? 'glass-surface-strong border-blue-500/40' : 'glass-surface border-white/70 hover:border-blue-300/50'}`}
+              className={`stagger-item category-card rounded-xl px-4 py-2 flex items-center gap-2 border transition glass-hover-lift shrink-0 ${categoryFilter === 'all' ? 'glass-surface-strong border-blue-500/40' : 'glass-surface border-white/70 hover:border-blue-300/50'}`}
             >
-              <span className="material-symbols-outlined text-3xl text-blue-600 mb-1">apps</span>
-              <div className="font-medium text-blue-900">Tất cả</div>
-              <div className="text-xs text-glass-subtle mt-1">{trackScopedVideos.length} video</div>
+              <span className="material-symbols-outlined text-lg text-blue-600">apps</span>
+              <div className="font-medium text-blue-900 text-sm">Tất cả</div>
+              <div className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-md">{trackScopedVideos.length}</div>
             </button>
 
-            {categories.map((cat) => (
-              <button
-                key={cat.id}
-                onClick={() => setCategoryFilter(cat.slug)}
-                className={`stagger-item category-card rounded-2xl p-4 text-center border transition glass-hover-lift ${categoryFilter === cat.slug ? 'glass-surface-strong border-blue-500/40' : 'glass-surface border-white/70 hover:border-blue-300/50'}`}
-              >
-                <span className="material-symbols-outlined text-3xl text-blue-600 mb-1">{cat.icon || 'folder'}</span>
-                <div className="font-medium text-blue-900">{cat.name}</div>
-                <div className="text-xs text-glass-subtle mt-1">{categoryVideoCountMap[cat.slug] || 0} video</div>
-              </button>
-            ))}
+            {trackFilter === 'imdb' ? (
+              imdbGenresList.map((genre) => (
+                <button
+                  key={genre}
+                  onClick={() => setCategoryFilter(genre)}
+                  className={`stagger-item category-card rounded-xl px-4 py-2 flex items-center gap-2 border transition glass-hover-lift shrink-0 ${categoryFilter === genre ? 'glass-surface-strong border-purple-500/40' : 'glass-surface border-white/70 hover:border-purple-300/50'}`}
+                >
+                  <span className="material-symbols-outlined text-lg text-purple-600">movie_filter</span>
+                  <div className="font-medium text-purple-900 text-sm">{genre}</div>
+                  <div className="text-[10px] px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded-md">{categoryVideoCountMap[genre] || 0}</div>
+                </button>
+              ))
+            ) : (
+              categories.map((cat) => (
+                <button
+                  key={cat.id}
+                  onClick={() => setCategoryFilter(cat.slug)}
+                  className={`stagger-item category-card rounded-xl px-4 py-2 flex items-center gap-2 border transition glass-hover-lift shrink-0 ${categoryFilter === cat.slug ? 'glass-surface-strong border-blue-500/40' : 'glass-surface border-white/70 hover:border-blue-300/50'}`}
+                >
+                  <span className="material-symbols-outlined text-lg text-blue-600">{cat.icon || 'folder'}</span>
+                  <div className="font-medium text-blue-900 text-sm">{cat.name}</div>
+                  <div className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-md">{categoryVideoCountMap[cat.slug] || 0}</div>
+                </button>
+              ))
+            )}
           </div>
         </section>
 
@@ -629,11 +595,6 @@ const Library = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 mb-6">
-            <button onClick={() => setHskFilter('all')} className={`px-3 sm:px-4 py-2 border rounded-full text-sm font-medium transition ${hskFilter === 'all' ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>{levelFilterLabel}</button>
-            {[1, 2, 3, 4, 5, 6].map((hsk) => (
-              <button key={hsk} onClick={() => setHskFilter(String(hsk))} className={`px-3 sm:px-4 py-2 border rounded-full text-sm font-medium transition ${hskFilter === String(hsk) ? 'glass-chip-active border-blue-400/40' : 'glass-chip'}`}>{getLevelLabel(trackFilter, hsk)}</button>
-            ))}
-
             <div className="w-full sm:w-auto sm:ml-auto">
               <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="glass-input w-full sm:w-auto px-3 py-2 rounded-lg text-sm">
                 <option value="newest">Mới nhất</option>
@@ -650,35 +611,84 @@ const Library = () => {
             </div>
           ) : (
             <>
-              <div className={viewMode === 'grid' ? 'stagger-sequence grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4' : 'stagger-sequence grid grid-cols-1 gap-3'}>
-                {pagedVideos.map((video) => (
-                  <Link
-                    to={`/player/${video.id}`}
-                    key={video.id}
-                    className={`stagger-item video-card glass-surface rounded-2xl border border-white/70 overflow-hidden glass-hover-lift ${viewMode === 'list' ? 'flex flex-col min-[520px]:flex-row' : ''}`}
-                  >
-                    <div className={`relative overflow-hidden ${viewMode === 'list' ? 'w-full h-44 min-[520px]:w-56 min-[520px]:h-36 shrink-0' : ''}`}>
-                      <VideoThumbnail
-                        thumbnailUrl={video.thumbnail_url}
-                        videoUrl={video.video_url}
-                        alt={video.title}
-                        className="w-full h-full aspect-video object-cover"
-                      />
-                      <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-2 py-1 rounded">{formatDuration(video.duration)}</div>
-                      <div className="absolute top-2 left-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white text-xs font-bold px-2 py-1 rounded">{getLevelLabel(getVideoTrack(video), video.hsk_level)}</div>
-                      <div className="absolute top-2 right-2 bg-white/85 text-blue-900 text-xs font-semibold px-2 py-1 rounded">{getVideoTrack(video) === 'english' ? 'English' : 'Chinese'}</div>
-                    </div>
+              <div className={trackFilter === 'imdb' ? 'stagger-sequence grid grid-cols-1 lg:grid-cols-2 gap-4' : (viewMode === 'grid' ? 'stagger-sequence grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4' : 'stagger-sequence grid grid-cols-1 gap-3')}>
+                {pagedVideos.map((video) => {
+                  if (trackFilter === 'imdb') {
+                    return (
+                      <Link
+                        to={`/player/${video.id}`}
+                        key={video.id}
+                        className="stagger-item rounded-3xl border border-purple-200/60 bg-white/40 backdrop-blur-md p-4 sm:p-5 flex gap-4 items-start glass-hover-lift hover:border-purple-400/70 transition-all shadow-sm hover:shadow-md relative overflow-hidden group"
+                      >
+                        <div className="absolute -right-10 -top-10 w-32 h-32 bg-purple-400/10 rounded-full blur-2xl group-hover:bg-purple-400/20 transition-all"></div>
 
-                    <div className="p-4 min-w-0">
-                      <h3 className="font-medium text-blue-950 line-clamp-2 mb-1">{video.title}</h3>
-                      <p className="text-sm text-glass-subtle line-clamp-1 mb-2">{video.title_cn || ''}</p>
-                      <div className="text-xs text-glass-subtle/80 flex items-center gap-2">
-                        <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">visibility</span>{Number(video.view_count || 0).toLocaleString()}</span>
-                        <span>{video.category_name || '-'}</span>
+                        {video.thumbnail_url ? (
+                          <img src={video.thumbnail_url} alt={video.title} className="w-24 sm:w-32 rounded-xl object-cover shrink-0 shadow-md aspect-[2/3] z-10" />
+                        ) : (
+                          <div className="w-24 sm:w-32 rounded-xl bg-purple-100/50 flex items-center justify-center shrink-0 shadow-md aspect-[2/3] z-10">
+                            <span className="material-symbols-outlined text-3xl text-purple-300">movie</span>
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0 space-y-2 z-10">
+                          <div className="font-bold text-lg sm:text-xl text-blue-950 leading-tight line-clamp-2">
+                            {video.title} {video.imdb_year && <span className="font-normal text-glass-subtle text-base">({video.imdb_year})</span>}
+                          </div>
+
+                          <div className="flex flex-wrap gap-1.5">
+                            {video.imdb_genres?.split(',').map((g) => (
+                              <span key={g} className="text-[10px] sm:text-xs px-2.5 py-0.5 bg-blue-100/70 text-blue-800 rounded-full font-medium">{g.trim()}</span>
+                            ))}
+                          </div>
+
+                          <div className="flex flex-wrap gap-2 text-xs font-bold pt-1">
+                            {video.imdb_rating && (
+                              <span className="px-2.5 py-1 bg-amber-100/80 text-amber-700 rounded-lg flex items-center gap-1 shadow-sm">⭐ {video.imdb_rating}</span>
+                            )}
+                            <span className="px-2.5 py-1 bg-emerald-100/80 text-emerald-700 rounded-lg flex items-center gap-1 shadow-sm">
+                              <span className="material-symbols-outlined text-sm">schedule</span>
+                              {Math.round(video.duration / 60)} min
+                            </span>
+                          </div>
+
+                          <p className="text-xs sm:text-sm text-glass-subtle line-clamp-2 sm:line-clamp-3 mt-1 leading-relaxed">{video.description}</p>
+
+                          <div className="text-xs sm:text-sm text-emerald-700 font-bold mt-2 flex items-center gap-1">
+                            Xem phim ngay
+                          </div>
+                        </div>
+                      </Link>
+                    );
+                  }
+
+                  return (
+                    <Link
+                      to={`/player/${video.id}`}
+                      key={video.id}
+                      className={`stagger-item video-card glass-surface rounded-2xl border border-white/70 overflow-hidden glass-hover-lift ${viewMode === 'list' ? 'flex flex-col min-[520px]:flex-row' : ''}`}
+                    >
+                      <div className={`relative overflow-hidden ${viewMode === 'list' ? 'w-full h-44 min-[520px]:w-56 min-[520px]:h-36 shrink-0' : ''}`}>
+                        <VideoThumbnail
+                          thumbnailUrl={video.thumbnail_url}
+                          videoUrl={video.video_url}
+                          alt={video.title}
+                          className="w-full h-full aspect-video object-cover"
+                        />
+                        <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-2 py-1 rounded">{formatDuration(video.duration)}</div>
+                        <div className="absolute top-2 left-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white text-xs font-bold px-2 py-1 rounded">{getLevelLabel(getVideoTrack(video), video.hsk_level)}</div>
+                        <div className="absolute top-2 right-2 bg-white/85 text-blue-900 text-xs font-semibold px-2 py-1 rounded">{getVideoTrack(video) === 'english' ? 'English' : 'Chinese'}</div>
                       </div>
-                    </div>
-                  </Link>
-                ))}
+
+                      <div className="p-4 min-w-0">
+                        <h3 className="font-medium text-blue-950 line-clamp-2 mb-1">{video.title}</h3>
+                        <p className="text-sm text-glass-subtle line-clamp-1 mb-2">{video.title_cn || ''}</p>
+                        <div className="text-xs text-glass-subtle/80 flex items-center gap-2">
+                          <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">visibility</span>{Number(video.view_count || 0).toLocaleString()}</span>
+                          <span>{video.category_name || '-'}</span>
+                        </div>
+                      </div>
+                    </Link>
+                  );
+                })}
               </div>
 
               {!pagedVideos.length && (
@@ -709,47 +719,7 @@ const Library = () => {
           )}
         </section>
 
-        {isLoggedIn ? (
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="glass-section-title text-xl">
-                <span className="material-symbols-outlined text-blue-600">bookmark</span>
-                Từ vựng đã lưu <span className="text-sm font-normal text-glass-subtle">({savedWords.length})</span>
-              </h2>
-            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 stagger-sequence">
-              {savedWords.slice(0, 8).map((word) => (
-                <div key={word.id} className="stagger-item glass-surface rounded-2xl p-4 border border-white/70">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-xl font-medium text-blue-950">{word.word_cn || ''}</div>
-                      <div className="text-blue-600 text-sm mt-0.5">{word.pinyin || ''}</div>
-                    </div>
-                    <button onClick={() => removeWord(word.id)} className="text-glass-subtle hover:text-red-500 transition">
-                      <span className="material-symbols-outlined text-lg">close</span>
-                    </button>
-                  </div>
-                  <div className="text-glass-subtle text-sm mt-2">{word.meaning || ''}</div>
-                  {word.video_title && <div className="text-xs text-glass-subtle/80 mt-2 truncate">Video: {word.video_title}</div>}
-                </div>
-              ))}
-
-              {!savedWords.length && (
-                <div className="col-span-full glass-empty py-8">
-                  <span className="material-symbols-outlined text-4xl">bookmark_border</span>
-                  <p className="mt-2">Chưa có từ vựng nào được lưu</p>
-                </div>
-              )}
-            </div>
-          </section>
-        ) : (
-          <section className="glass-surface rounded-2xl border border-white/70 p-5 text-center">
-            <h3 className="text-lg font-semibold text-blue-900">Bạn đang xem ở chế độ mở</h3>
-            <p className="text-sm text-glass-subtle mt-1">Không cần đăng nhập để xem video. Đăng nhập để lưu từ vựng và theo dõi tiến độ học.</p>
-            <Link to="/login" className="inline-flex mt-3 glass-btn glass-btn-primary px-4 py-2 rounded-xl text-sm font-semibold">Đăng nhập để đồng bộ tiến độ</Link>
-          </section>
-        )}
       </main>
 
       <UserPanelDrawer

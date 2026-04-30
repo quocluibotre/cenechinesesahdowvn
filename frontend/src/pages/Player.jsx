@@ -873,6 +873,7 @@ const Player = () => {
     try {
       const response = await fetch(`${API_BASE}/blog/saved_words`, {
         headers: getAuth(),
+        cache: 'no-store',
       });
 
       if (response.status === 401 || response.status === 403) {
@@ -969,17 +970,20 @@ const Player = () => {
 
   const saveProgress = async () => {
     const token = localStorage.getItem('token');
-    if (!token || !videoRef.current || !videoData) {
+    if (!token || !videoData) {
       return;
     }
+
+    const currentPos = currentTime || videoRef.current?.currentTime || 0;
+    const currentDur = duration || videoRef.current?.duration || videoData.duration || 0;
 
     const payload = {
       video_id: Number(videoId),
       watched_seconds: Math.floor(watchedSeconds),
-      last_position: videoRef.current.currentTime,
-      duration: Number(videoRef.current.duration || videoData.duration || 0),
-      is_completed: watchedSeconds > 0 && videoRef.current.duration > 0
-        ? watchedSeconds / videoRef.current.duration >= 0.9
+      last_position: currentPos,
+      duration: Number(currentDur),
+      is_completed: watchedSeconds > 0 && currentDur > 0
+        ? watchedSeconds / currentDur >= 0.9
         : false,
     };
 
@@ -1004,6 +1008,7 @@ const Player = () => {
     try {
       const response = await fetch(`${API_BASE}/user/progress?video_id=${videoId}`, {
         headers: getAuth(),
+        cache: 'no-store',
       });
       const data = await response.json();
       if (data.success && data.data && data.data.length && videoRef.current) {

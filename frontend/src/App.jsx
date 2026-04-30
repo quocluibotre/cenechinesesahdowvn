@@ -14,6 +14,7 @@ import Admin from './pages/Admin';
 import Player from './pages/Player';
 import Library from './pages/Library';
 import ThemeToggleButton from './components/ui/ThemeToggleButton';
+import CookieConsent from './components/ui/CookieConsent';
 
 const EXIT_DURATION = 180;
 const ENTER_DURATION = 360;
@@ -81,6 +82,7 @@ function App() {
       <div className="app-sky">
         <AnimatedRoutes />
         <ThemeToggleButton />
+        <CookieConsent />
       </div>
     </Router>
   );

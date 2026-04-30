@@ -53,9 +53,9 @@ const UserPanelDrawer = ({
 
     try {
       const [savedRes, progressRes, statsRes] = await Promise.all([
-        fetch(`${API_BASE}/blog/saved_words`, { headers: authHeaders() }),
-        fetch(`${API_BASE}/user/progress`, { headers: authHeaders() }),
-        fetch(`${API_BASE}/user/stats/me`, { headers: authHeaders() }),
+        fetch(`${API_BASE}/blog/saved_words`, { headers: authHeaders(), cache: 'no-store' }),
+        fetch(`${API_BASE}/user/progress`, { headers: authHeaders(), cache: 'no-store' }),
+        fetch(`${API_BASE}/user/stats/me`, { headers: authHeaders(), cache: 'no-store' }),
       ]);
 
       if (

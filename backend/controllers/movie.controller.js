@@ -10,6 +10,25 @@ const OMDB_API_KEY = process.env.OMDB_API_KEY || '8b7f7ee1';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+let imdbColumnsEnsured = false;
+
+const ensureImdbColumns = async () => {
+  if (imdbColumnsEnsured) return;
+  
+  if (db.clientType === 'postgres') {
+    await db.promise().query(`ALTER TABLE videos ADD COLUMN IF NOT EXISTS imdb_genres VARCHAR(255) DEFAULT NULL`);
+    await db.promise().query(`ALTER TABLE videos ADD COLUMN IF NOT EXISTS imdb_rating VARCHAR(10) DEFAULT NULL`);
+    await db.promise().query(`ALTER TABLE videos ADD COLUMN IF NOT EXISTS imdb_year VARCHAR(10) DEFAULT NULL`);
+  } else {
+    // MySQL
+    const [cols] = await db.promise().query("SHOW COLUMNS FROM videos LIKE 'imdb_genres'");
+    if (!cols.length) {
+      await db.promise().query("ALTER TABLE videos ADD COLUMN imdb_genres VARCHAR(255) DEFAULT NULL, ADD COLUMN imdb_rating VARCHAR(10) DEFAULT NULL, ADD COLUMN imdb_year VARCHAR(10) DEFAULT NULL");
+    }
+  }
+  imdbColumnsEnsured = true;
+};
+
 /**
  * Extract IMDB ID (tt\d+) from a URL or plain ID input.
  * Accepts: "tt12042730", "12042730", "https://www.imdb.com/title/tt12042730/"
@@ -282,6 +301,8 @@ exports.processImdbMovie = async (req, res) => {
 
     const video_url = `imdb:${imdbId}`;
 
+    await ensureImdbColumns();
+
     const [result] = await db.promise().query(
       `INSERT INTO videos
          (title, title_cn, description, category_id, hsk_level, language_track,
@@ -540,7 +561,12 @@ exports.autoImportMovie = async (req, res) => {
     const title    = omdb.Title || imdbId;
     const poster   = omdb.Poster !== 'N/A' ? omdb.Poster : '';
     const plot     = omdb.Plot   !== 'N/A' ? omdb.Plot   : '';
+    const imdbRating = omdb.imdbRating !== 'N/A' ? omdb.imdbRating : null;
+    const imdbYear   = omdb.Year !== 'N/A' ? omdb.Year : null;
+    const imdbGenres = omdb.Genre !== 'N/A' ? omdb.Genre : null;
     const video_url = `imdb:${imdbId}`;
+
+    await ensureImdbColumns();
 
     // 3. Insert video into DB (upsert by video_url to avoid duplicates)
     const [[existing]] = await db.promise().query(
@@ -552,12 +578,13 @@ exports.autoImportMovie = async (req, res) => {
       videoId = existing.id;
       await db.promise().query(
         `UPDATE videos SET title=?, title_cn=?, description=?, thumbnail_url=?,
-         category_id=?, hsk_level=?, is_published=?, is_free=?, updated_at=NOW() WHERE id=?`,
+         category_id=?, hsk_level=?, is_published=?, is_free=?, imdb_genres=?, imdb_rating=?, imdb_year=?, updated_at=NOW() WHERE id=?`,
         [title, title, plot, poster,
          category_id ? Number(category_id) : null,
          Number(hsk_level),
          is_published ? 1 : 0,
          is_free !== false ? 1 : 0,
+         imdbGenres, imdbRating, imdbYear,
          videoId]
       );
       console.log(`[auto-import] Updated existing video #${videoId}`);
@@ -565,14 +592,15 @@ exports.autoImportMovie = async (req, res) => {
       const [result] = await db.promise().query(
         `INSERT INTO videos
            (title, title_cn, description, category_id, hsk_level, language_track,
-            video_url, thumbnail_url, is_published, is_free, duration, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'english', ?, ?, ?, ?, 0, NOW(), NOW())`,
+            video_url, thumbnail_url, is_published, is_free, imdb_genres, imdb_rating, imdb_year, duration, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'english', ?, ?, ?, ?, ?, ?, ?, 0, NOW(), NOW())`,
         [title, title, plot,
          category_id ? Number(category_id) : null,
          Number(hsk_level),
          video_url, poster,
          is_published ? 1 : 0,
-         is_free !== false ? 1 : 0]
+         is_free !== false ? 1 : 0,
+         imdbGenres, imdbRating, imdbYear]
       );
       videoId = result.insertId;
       console.log(`[auto-import] Inserted video #${videoId}`);
