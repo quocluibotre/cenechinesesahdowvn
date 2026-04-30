@@ -56,7 +56,7 @@ const Home = () => {
                 <span className="glass-chip px-3 py-1">Lộ trình tiếng Anh</span>
               </div>
             </div>
-            
+
             <div className="relative animate-glass-rise" style={{ animationDelay: '0.08s' }}>
               <div className="absolute -top-12 -right-12 w-72 h-72 bg-blue-400/25 rounded-full blur-3xl" />
               <div className="absolute -bottom-10 -left-8 w-64 h-64 bg-cyan-300/25 rounded-full blur-3xl" />
@@ -148,11 +148,11 @@ const Home = () => {
           </div>
         </section>
       </main>
-      
+
       <footer className="pb-16 px-4 sm:px-6">
         <div className="max-w-7xl mx-auto glass-surface rounded-3xl border border-white/70 py-10 text-center">
           <span className="text-xl font-extrabold text-blue-800">Cineshadow <span className="font-medium text-blue-600">Languages</span></span>
-          <p className="text-glass-subtle mt-4">Nền tảng học ngoại ngữ bằng shadowing hiện đại.</p>
+          <p className="text-glass-subtle mt-4">Website vẫn còn đang trong quá trình phát triển, cảm ơn bạn đã ủng hộ!</p>
         </div>
       </footer>
     </div>
